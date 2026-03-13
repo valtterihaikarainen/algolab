@@ -12,7 +12,7 @@
 ### Programming languages
 
 - **Primary implementation language**: **C++** (C++17 or later).  
-- I am able to review projects written in **Python** and **C++** 
+- I review projects written in **Python** and **C++** 
 
 ---
 
