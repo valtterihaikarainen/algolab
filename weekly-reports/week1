@@ -1,0 +1,53 @@
+
+### Viikkoraportti
+
+**Ajankäyttö tällä viikolla**: *≈ 4–6 tuntia* (teoriaan tutustuminen, suunnittelu ja määrittelydokumentin luonnoksen kirjoittaminen)
+
+---
+
+### Mitä tein tällä viikolla?
+
+* Luin kurssin ohjeet ja varmistin ohjaajalta asetetut vaatimukset (oma backprop-toteutus, ei PyTorchia jne.).
+* Tutustuin perhosmatriisien (butterfly matrices) ja rakenteellisten matriisien teoriaan, mukaan lukien niiden yhteys FFT-tyylisiin hajotelmiin ja lohko-perhoskerroksiin (block-butterfly layers).
+* Kehitin projektiideaa eteenpäin, kunnes se sopi kurssin laajuuteen: pienen C++ -pohjaisen MLP:n (monikerroksinen perceptroni) toteuttaminen perhosrakenteisilla lineaarisilla kerroksilla, opetettuna MNIST-datalla ja käsin koodatulla backprop-algoritmilla.
+* Kirjoitin ja päivitin **määrittelydokumentin** vastaamaan tätä uutta laajuutta.
+
+---
+
+### Miten ohjelma on edistynyt?
+
+* Käsitteellinen suunnittelu on nyt melko selkeä:
+* Perustason tiheä (dense) MLP C++:lla (forward- ja backward-vaiheet).
+* Perhosrakenteinen lineaarikerros lohkorakenteella sekä sen forward/backward-vaiheet.
+* Opetussilmukka MNIST-datalle ja vertailu tarkkuuden/kompleksisuuden välillä.
+
+
+* Yhtään C++ -koodia ei ole vielä kirjoitettu; tähänastinen työ on keskittynyt teoriaan, suunnitteluun ja määrittelyyn.
+
+---
+
+### Mitä opin tällä viikolla/tänään?
+
+* Ymmärsin, kuinka perhosmatriisit voidaan esittää harvojen (sparse) vaiheiden tuloina, jotka koostuvat pienistä $b \times b$ -lohkoista, ja miten tämä yleistää klassisia FFT-tyyppisiä algoritmeja.
+* Sain paremman käsityksen siitä, kuinka rakenteelliset matriisit voivat vähentää parametrien määrää ja FLOP-operaatioita verrattuna tiheisiin kerroksiin.
+* Kurssin rajoitteet selkeytyivät: tiedän nyt, että minun on toteutettava forward- ja backprop-vaiheet itse C++:lla (ei automaattista derivointia tai korkean tason koneoppimiskirjastoja), mikä vaikuttaa merkittävästi suunnitteluratkaisuihin.
+
+---
+
+### Mikä on jäänyt epäselväksi tai ollut haastavaa?
+
+* **Backpropin toteuttamisen käytännön yksityiskohdat C++:lla** puhtaasti ja ilman bugeja, erityisesti:
+* Minierien (mini-batches) muotojen ja indeksien hallinta ilman korkean tason tensorikirjastoa.
+* Perhoskerroksen tietorakenteiden suunnittelu siten, että sekä eteenpäin- että taaksepäinviennit ovat tehokkaita eivätkä liian monimutkaisia.
+---
+
+### Mitä teen seuraavaksi?
+
+* Käyn läpi resursseja **yksinkertaisten neuroverkkojen ja backprop-algoritmin toteuttamisesta alusta alkaen C++:lla** (tai pelkillä taulukoilla) löytääkseni hyvän rakenteen koodille.
+* Viimeistelen ja hion määrittelydokumentin palautuskuntoon.
+* Hahmotan C++ -luokkien rajapinnat seuraaville:
+* `DenseLayer`, `ButterflyLayer`, aktivaatiofunktiot ja koulutus-silmukka.
+
+
+* Aloitan **perustason tiheän MLP:n** (forward ja backward) toteuttamisen ennen perhoskerroksen lisäämistä.
+
