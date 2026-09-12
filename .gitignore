@@ -1,0 +1,25 @@
+# CMake
+build/
+build*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.ninja
+.ninja_deps
+.ninja_log
+
+# Coverage (gcov / lcov)
+*.gcda
+*.gcno
+*.gcov
+coverage.info
+coverage_html/
+_htmlcov/
+
+# Editor / OS
+.cache/
+*.swp
+*~
+.DS_Store
