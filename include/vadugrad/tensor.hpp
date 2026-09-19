@@ -128,3 +128,106 @@ public:
     void reshape(const std::vector<int>& new_shape);
 };
 
+/**
+ * @brief Matrix multiplication for rank-2 tensors.
+ *
+ * Computes @f$C = A \times B@f$ for row-major 2D tensors.
+ *
+ * @param a Left operand with shape [m, k].
+ * @param b Right operand with shape [k, n].
+ * @return Tensor with shape [m, n].
+ *
+ * @throws std::invalid_argument if either tensor is not rank-2 or inner dimensions mismatch.
+ */
+[[nodiscard]] Tensor matmul(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief Elementwise addition of two tensors with identical shape.
+ * @throws std::invalid_argument if shapes differ.
+ */
+[[nodiscard]] Tensor add(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief Elementwise subtraction of two tensors with identical shape.
+ * @throws std::invalid_argument if shapes differ.
+ */
+[[nodiscard]] Tensor sub(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief Elementwise multiplication of two tensors with identical shape.
+ * @throws std::invalid_argument if shapes differ.
+ */
+[[nodiscard]] Tensor mul(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief Elementwise division of two tensors with identical shape.
+ * @throws std::invalid_argument if shapes differ.
+ */
+[[nodiscard]] Tensor div(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief Add scalar @p s to each element of @p a.
+ */
+[[nodiscard]] Tensor add(const Tensor& a, float s);
+
+/**
+ * @brief Subtract scalar @p s from each element of @p a.
+ */
+[[nodiscard]] Tensor sub(const Tensor& a, float s);
+
+/**
+ * @brief Multiply each element of @p a by scalar @p s.
+ */
+[[nodiscard]] Tensor mul(const Tensor& a, float s);
+
+/**
+ * @brief Divide each element of @p a by scalar @p s.
+ */
+[[nodiscard]] Tensor div(const Tensor& a, float s);
+
+/**
+ * @brief Convenience operator for elementwise tensor addition.
+ * @throws std::invalid_argument if shapes differ.
+ */
+[[nodiscard]] Tensor operator+(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief Convenience operator for elementwise tensor subtraction.
+ * @throws std::invalid_argument if shapes differ.
+ */
+[[nodiscard]] Tensor operator-(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief Convenience operator for tensor-scalar multiplication.
+ */
+[[nodiscard]] Tensor operator*(const Tensor& a, float s);
+
+/**
+ * @brief Convenience operator for tensor-scalar multiplication.
+ */
+[[nodiscard]] Tensor operator*(float s, const Tensor&a);
+
+ /**
+ * @brief Transpose a rank-2 tensor.
+ *
+ * If input has shape [m, n], returns shape [n, m].
+ *
+ * @param x Input tensor.
+ * @return Transposed tensor with copied data (no view semantics).
+ *
+ * @throws std::invalid_argument if @p x.ndim() != 2.
+ */
+[[nodiscard]] Tensor transpose2d(const Tensor& x);
+
+/**
+ * @brief Reduce tensor by summing along one axis.
+ *
+ * @param x Input tensor.
+ * @param axis Axis to reduce in range [0, x.ndim()).
+ * @param keepdim If true, reduced axis is kept with size 1; otherwise removed.
+ * @return Reduced tensor.
+ *
+ * @throws std::invalid_argument if axis is out of range.
+ */
+[[nodiscard]] Tensor sum(const Tensor& x, int axis, bool keepdim = false);
+

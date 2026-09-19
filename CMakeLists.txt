@@ -13,7 +13,7 @@ else()
   add_compile_options(-O2 -Wall -Wextra)
 endif()
 
-add_library(vadugrad src/tensor.cpp)
+add_library(vadugrad src/tensor.cpp src/dense_linear.cpp)
 target_include_directories(vadugrad PUBLIC include)
 
 if(ENABLE_COVERAGE)
@@ -31,7 +31,11 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
-add_executable(tests tests/test_tensor.cpp)
+add_executable(vadugrad_cli src/main.cpp)
+target_link_libraries(vadugrad_cli PRIVATE vadugrad)
+set_target_properties(vadugrad_cli PROPERTIES OUTPUT_NAME vadugrad)
+
+add_executable(tests tests/test_tensor.cpp tests/test_dense_linear.cpp)
 target_link_libraries(tests PRIVATE vadugrad GTest::gtest_main)
 
 if(ENABLE_COVERAGE)

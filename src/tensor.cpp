@@ -8,6 +8,11 @@
 #include <vector>
 
 std::vector<int> compute_strides(const std::vector<int>& shape) {
+
+    if (shape.empty()) {
+        throw std::invalid_argument("shape cant be empty");
+    }
+
     int ndim = static_cast<int>(shape.size());
     std::vector<int> strides(ndim);
     strides[ndim - 1] = 1;
@@ -17,6 +22,12 @@ std::vector<int> compute_strides(const std::vector<int>& shape) {
     }
     return strides;
 }
+
+
+/** 
+* Public API including the member functions of the Tensor class
+*/
+
 
 Tensor::Tensor(const std::vector<int>& shape) {
     ndim_ = static_cast<int>(shape.size());
@@ -199,6 +210,153 @@ void Tensor::reshape(const std::vector<int>& new_shape) {
     ndim_ = new_ndim;
 }
 
+template <typename Op>
+Tensor elementwise_binary(const Tensor& a, const Tensor& b, Op op) {
+    if (a.shape() != b.shape()) throw std::invalid_argument("tensor shapes must match");
+
+    Tensor out(a.shape());
+    const int n = a.numel();
+    const float* ad = a.data();
+    const float* bd = b.data();
+    float* od = out.data();
+    for (int i = 0; i < n; ++i) od[i] = op(ad[i], bd[i]);
+
+    return out;
+}
+
+Tensor add(const Tensor& a, const Tensor& b) { return elementwise_binary(a, b, [](float x, float y){ return x + y; }); }
+Tensor sub(const Tensor& a, const Tensor& b) { return elementwise_binary(a, b, [](float x, float y){ return x - y; }); }
+Tensor mul(const Tensor& a, const Tensor& b) { return elementwise_binary(a, b, [](float x, float y){ return x * y; }); }
+Tensor div(const Tensor& a, const Tensor& b) { return elementwise_binary(a, b, [](float x, float y){ return x / y; }); }
+
+template <typename Op>
+Tensor elementwise_scalar(const Tensor& a, float s, Op op) {
+
+    Tensor out(a.shape());
+    const int n = a.numel();
+    const float* ad = a.data();
+    float* od = out.data();
+    for (int i = 0; i < n; ++i) od[i] = op(ad[i], s);
+
+    return out;
+}
+
+Tensor add(const Tensor& a, float s) { return elementwise_scalar(a, s, [](float x, float y){ return x + y; }); }
+Tensor sub(const Tensor& a, float s) { return elementwise_scalar(a, s, [](float x, float y){ return x - y; }); }
+Tensor mul(const Tensor& a, float s) { return elementwise_scalar(a, s, [](float x, float y){ return x * y; }); }
+Tensor div(const Tensor& a, float s) { return elementwise_scalar(a, s, [](float x, float y){ return x / y; }); }
+
+Tensor operator+(const Tensor& a, const Tensor& b) { return add(a, b); }
+Tensor operator-(const Tensor& a, const Tensor& b) { return sub(a, b); }
+Tensor operator*(const Tensor& a, float s) { return mul(a, s); }
+Tensor operator*(float s, const Tensor& a) { return mul(a, s); }
+
+Tensor transpose2d(const Tensor& x) {
+
+    // Validating the rank
+    if (x.ndim() != 2) {
+        throw std::invalid_argument("The number of dimensions should equal 2");
+    }
+
+    std::vector<int> shape = x.shape();
+    const int rows = shape[0];
+    const int columns = shape[1];
+
+    Tensor output({columns, rows});
+
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < columns; ++j) {
+            output({j, i}) = x({i, j});
+        }
+    }
+    return output;
+}
+
+Tensor matmul(const Tensor& a, const Tensor& b) {
+
+    if (a.ndim() != 2 || b.ndim() != 2) {
+        throw std::invalid_argument("matmul expects rank-2 tensors");
+    }
+
+    const std::vector<int> shape_a = a.shape();
+    const int m = shape_a[0];
+    const int k = shape_a[1];
+    
+    const std::vector<int> shape_b = b.shape();
+    const int k2 = shape_b[0];
+    const int n = shape_b[1];
+
+    if (k != k2) {
+        throw std::invalid_argument("matmul inner dimensions must match");
+    }
+
+    Tensor output({m, n});
+
+    for (int i = 0; i < m; ++i) {
+        for (int j = 0; j < n; ++j) {
+            float acc = 0.0f;
+            for (int p = 0; p < k; ++p) {
+                acc += a({i, p}) * b({p, j});
+            }
+            output({i, j}) = acc; 
+        }
+    }
+    return output;
+}
+
+Tensor sum(const Tensor& x, int axis, bool keepdim) {
+
+    const int ndim = x.ndim();
+    if (axis < 0 || axis >= ndim) {
+        throw std::invalid_argument("axis needs to be within [0, x.ndim]");
+    }
+
+    const auto shape = x.shape();
+
+    // Build output shape
+    std::vector<int> out_shape;
+    out_shape.reserve(keepdim ? ndim : ndim - 1);
+    for (int d = 0; d < ndim; ++d) {
+        if (d == axis) {
+            if (keepdim) {
+                out_shape.push_back(1);
+            }
+        } else {
+            out_shape.push_back(shape[d]);
+        }
+    }
+
+    if (out_shape.empty()) {
+        throw std::invalid_argument("sum producing rank-0 tensor is not supported");
+    }
+
+    Tensor out(out_shape);
+
+    int outer = 1; 
+    for (int d = 0; d < axis; ++d) outer *= shape[d];
+
+    const int reduce = shape[axis];
+
+    int inner = 1;
+    for (int d = axis +1; d < static_cast<int>(shape.size()); ++d) inner *= shape[d];
+
+    const float* xd = x.data();
+    float* od = out.data();
+
+    for (int o = 0; o < outer; ++o) {
+        for (int i = 0; i < inner; ++i) {
+            float acc = 0.0f;
+            for (int r = 0; r < reduce; ++r) {
+                int in_flat = (o * reduce + r) * inner + i;
+                acc += xd[in_flat];
+            }
+            int out_flat = o * inner + i;
+            od[out_flat]= acc;
+        }
+    }
+
+    return out;
+}
 
 
 
