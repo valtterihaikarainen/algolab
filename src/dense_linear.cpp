@@ -20,7 +20,8 @@ std::vector<int> checked_linear_weight_shape(int in_features, int out_features) 
 
 DenseLinear::DenseLinear(int in_features, int out_features)
     : weight_(checked_linear_weight_shape(in_features, out_features)),
-      bias_(std::vector<int>{out_features}) {}
+      bias_(std::vector<int>{out_features}),
+      gradient_(std::vector<int>{1}) {}
 
 Tensor& DenseLinear::weight() {
     return weight_;

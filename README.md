@@ -1,6 +1,6 @@
-# vadugrad — MNIST MLP with butterfly layers (Algorithms and AI project)
+# vadugrad — from-scratch C++ neural nets and transformer blocks
 
-This repository contains a from-scratch C++ implementation of a small feed-forward network for MNIST, including manual backpropagation. The [specification](docs/specification-doc.md) describes scope, complexity, and sources.
+This repository contains from-scratch C++ implementations of tensor ops, manual backprop modules, and a decoder-only transformer training demo. The [specification](docs/specification-doc.md) describes original scope, complexity, and sources.
 
 ## Build
 
@@ -22,6 +22,16 @@ Or run the test binary directly: `./build/tests`.
 ## Run the CLI demo
 
 After building, the executable is `./build/vadugrad` (target name `vadugrad_cli`). It prints a small dense-layer forward pass and one backward step. Use `./build/vadugrad --help` for options.
+
+## Run the tiny transformer training demo
+
+After building, run:
+
+```bash
+./build/train_lm
+```
+
+This runs a tiny synthetic next-token training loop and prints loss values.
 
 ## Test coverage (gcov / lcov)
 
@@ -49,7 +59,9 @@ Open `coverage_html/index.html` in a browser.
 | Document | Path |
 |----------|------|
 | Specification | [docs/specification-doc.md](docs/specification-doc.md) |
+| Implementation | [docs/implementation.md](docs/implementation.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
-| Weekly reports | [weekly-reports/](weekly-reports/) |
+| User guide | [docs/user-guide.md](docs/user-guide.md) |
+| Weekly reports | [week 1](weekly-reports/week1.md), [week 2](weekly-reports/week2.md), [week 3](weekly-reports/week3.md), [week 4](weekly-reports/week4.md) |
 
 Course documentation requirements: [Documentation](https://algolabra-hy.github.io/documentation-en), [Suggested schedule](https://algolabra-hy.github.io/schedule-en).

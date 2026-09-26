@@ -16,6 +16,7 @@
 class DenseLinear {
     Tensor weight_;  ///< Shape [in_features, out_features].
     Tensor bias_;    ///< Shape [out_features].
+    Tensor gradient_;
 
 public:
     /**
@@ -58,4 +59,5 @@ public:
      * @param grad_output @f$\partial L/\partial y@f$, shape [batch, out_features].
      */
     [[nodiscard]] BackwardGradients backward(const Tensor& x, const Tensor& grad_output) const;
+
 };

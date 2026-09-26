@@ -13,7 +13,21 @@ else()
   add_compile_options(-O2 -Wall -Wextra)
 endif()
 
-add_library(vadugrad src/tensor.cpp src/dense_linear.cpp)
+add_library(vadugrad
+  src/tensor.cpp
+  src/tensor_ops.cpp
+  src/nn_ops.cpp
+  src/dense_linear.cpp
+  src/multihead_attention.cpp
+  src/layer_norm.cpp
+  src/activations.cpp
+  src/feed_forward.cpp
+  src/embedding.cpp
+  src/parameter_init.cpp
+  src/transformer_block.cpp
+  src/decoder_only_transformer.cpp
+  src/adam.cpp
+)
 target_include_directories(vadugrad PUBLIC include)
 
 if(ENABLE_COVERAGE)
@@ -35,7 +49,18 @@ add_executable(vadugrad_cli src/main.cpp)
 target_link_libraries(vadugrad_cli PRIVATE vadugrad)
 set_target_properties(vadugrad_cli PROPERTIES OUTPUT_NAME vadugrad)
 
-add_executable(tests tests/test_tensor.cpp tests/test_dense_linear.cpp)
+add_executable(train_lm apps/train_lm.cpp)
+target_link_libraries(train_lm PRIVATE vadugrad)
+
+add_executable(tests
+  tests/test_tensor.cpp
+  tests/test_dense_linear.cpp
+  tests/test_multihead_attention.cpp
+  tests/test_nn_ops.cpp
+  tests/test_layer_norm.cpp
+  tests/test_decoder_only_transformer.cpp
+  tests/test_tiny_overfit.cpp
+)
 target_link_libraries(tests PRIVATE vadugrad GTest::gtest_main)
 
 if(ENABLE_COVERAGE)

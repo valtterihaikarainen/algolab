@@ -1,15 +1,27 @@
 # Testing
 
-This document describes how **vadugrad** is unit tested and how to collect **line and branch coverage** for the C++ sources (course analogue to Python `coverage`).
+This document describes how `vadugrad` is tested, what has been tested, and how tests can be reproduced.
 
-## Framework and layout
+## 1. Framework and test types
 
-- **Framework**: [GoogleTest](https://github.com/google/googletest), pulled by CMake `FetchContent` when configuring the project.
-- **Test sources**: `tests/test_tensor.cpp` (tensor utilities, `matmul`, `sum`, etc.) and `tests/test_dense_linear.cpp` (dense linear layer forward/backward with hand-checked values and batching).
+- **Unit testing framework**: [GoogleTest](https://github.com/google/googletest)
+- **Test categories in this repository**:
+  - unit tests for tensor primitives and math ops
+  - unit tests for neural network layers/modules
+  - small integration tests for end-to-end training behavior
 
-## Running tests
+Not all possible test types are needed in this project. The main correctness risks here are:
 
-From the repository root:
+1. shape/axis mistakes
+2. backward gradient routing mistakes
+3. numerical instability in softmax/cross-entropy path
+4. integration mismatch between model backward output and optimizer update
+
+Current test suite is designed specifically around those risks.
+
+## 2. How to run tests
+
+From repository root:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -17,42 +29,98 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-Or run the test binary directly: `./build/tests`.
-
-## What is covered
-
-Representative checks include:
-
-- Row-major strides, tensor copy/move behaviour, `fill`, `reshape` invariants, out-of-range indexing.
-- Elementwise ops, `transpose2d`, `matmul`, `sum` along an axis (with and without `keepdim`).
-- **Dense linear layer**: forward @f$y = xW + b@f$, backward gradients @f$\partial L/\partial x@f$, @f$\partial L/\partial W@f$, @f$\partial L/\partial b@f$ for single-sample and batched inputs, plus shape/validation errors.
-
-## Coverage report (gcov)
-
-Configure with `ENABLE_COVERAGE=ON` (see the main [README](../README.md)), build, run tests, then generate `.gcov` files from the build directory:
+Alternative:
 
 ```bash
-cd build
-gcov -b -s ../src CMakeFiles/vadugrad.dir/src/tensor.cpp.gcno \
-  CMakeFiles/vadugrad.dir/src/dense_linear.cpp.gcno
+./build/tests
 ```
 
-This writes `tensor.cpp.gcov` and `dense_linear.cpp.gcov` under `build/`. Open them in an editor or use `lcov`/`genhtml` as described in the README for an HTML summary.
+## 3. What is tested and with what inputs
 
-### Snapshot (week 3, current suite)
+### Tensor core (`tests/test_tensor.cpp`)
 
-The following figures are **illustrative**: they depend on the exact compiler, flags, and tests. Regenerate after changing code or tests.
+Tested:
 
-| Translation unit   | Line coverage (gcov) |
-|--------------------|------------------------|
-| `src/tensor.cpp`   | about 88%              |
-| `src/dense_linear.cpp` | about 83%          |
+- strides calculation (`compute_strides`)
+- copy/move/assignment behavior
+- fill, reshape invariants, index out-of-range handling
+- elementwise ops, transpose, matmul, sum
 
-`src/main.cpp` is not linked into the test binary; it is exercised by running `./build/vadugrad` manually.
+Inputs:
 
-## Static analysis (C++)
+- small hand-constructed tensors (`2x2`, `2x3`, `3x2`, simple 3D shapes)
+- boundary/error cases (bad ranks, bad axis, mismatching shapes)
 
-The course text may mention **pylint** for Python projects. For this C++ codebase, comparable hygiene is:
+### Dense layer (`tests/test_dense_linear.cpp`)
 
-- Compiler warnings: `-Wall -Wextra` (enabled in `CMakeLists.txt`).
-- Optional: `clang-tidy` or `cppcheck` on `src/` and `include/` (not wired into CMake by default).
+Tested:
+
+- forward against hand-computed values
+- backward gradients (`dL/dx`, `dL/dW`, `dL/db`) against hand-computed values
+- batched gradient aggregation behavior
+- constructor/input validation errors
+
+Inputs:
+
+- small deterministic matrices/vectors with exact expected outputs
+
+### Attention and transformer modules
+
+- `tests/test_multihead_attention.cpp`
+  - constructor validation
+  - self/cross forward shape checks
+  - backward shape checks
+  - backward-before-forward error
+  - causal mask behavior (future positions zeroed)
+- `tests/test_layer_norm.cpp`
+  - forward/backward shape checks
+- `tests/test_nn_ops.cpp`
+  - cross-entropy output and gradient shape checks
+- `tests/test_decoder_only_transformer.cpp`
+  - decoder model forward/backward shape checks across full stack
+
+Inputs:
+
+- small synthetic batches with fixed tensor dimensions
+- deterministic token-id tensors for reproducible checks
+
+### Integration test (`tests/test_tiny_overfit.cpp`)
+
+Tested:
+
+- end-to-end training loop signal: loss should decrease on a tiny fixed batch
+
+Inputs:
+
+- one tiny token sequence batch
+- fixed target next-token labels
+- fixed random seed for parameter initialization
+
+This is an empirical test that complements unit tests by validating module interoperability.
+
+## 4. Coverage collection (gcov/lcov)
+
+Configure with coverage flags:
+
+```bash
+cmake -S . -B build-coverage -DENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-coverage
+cd build-coverage && ctest --output-on-failure
+```
+
+Generate gcov output (example):
+
+```bash
+gcov -b -s ../src \
+  CMakeFiles/vadugrad.dir/src/tensor.cpp.gcno \
+  CMakeFiles/vadugrad.dir/src/dense_linear.cpp.gcno \
+  CMakeFiles/vadugrad.dir/src/multihead_attention.cpp.gcno
+```
+
+Optional HTML report with lcov/genhtml (see `README.md`).
+
+## 5. Testing limitations and future improvements
+
+- Current suite emphasizes shape correctness and integration flow more than exact numerical gradient checking.
+- Next useful extension: finite-difference gradient checks for selected modules (`LayerNorm`, `FeedForward`, `TransformerBlock`).
+- Performance benchmarks are not yet part of automated tests.
