@@ -16,6 +16,12 @@
 
 ---
 
+### Current scope (week 5)
+
+The original plan below (dense vs butterfly MLP on MNIST, from-scratch backprop) is still the **core**. The repository now also includes that butterfly layer (`ButterflyLinear`), MNIST loading/training (`train_mnist`), and a decoder-only transformer stack (`train_lm`) built on the same tensor and dense-linear primitives. No PyTorch or automatic differentiation.
+
+---
+
 ### Algorithms and data structures to be implemented
 
 - **Feed‑forward neural network (MLP)** for MNIST classification:

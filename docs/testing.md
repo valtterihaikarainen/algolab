@@ -2,6 +2,8 @@
 
 This document describes how `vadugrad` is tested, what has been tested, and how tests can be reproduced.
 
+**Peer reviewers:** use the root **`README.md`** section **For peer reviewers** for the canonical command sequence (configure, build, `ctest`). This file explains *what* each test area exercises and how to collect coverage.
+
 ## 1. Framework and test types
 
 - **Unit testing framework**: [GoogleTest](https://github.com/google/googletest)
@@ -64,6 +66,24 @@ Inputs:
 
 - small deterministic matrices/vectors with exact expected outputs
 
+### Butterfly linear (`tests/test_butterfly_linear.cpp`)
+
+Tested:
+
+- invalid constructor arguments (non power-of-two `n`)
+- forward correctness against an explicit dense matrix built from basis vectors (checks the composed linear map; compares against `x @ dense^T` to match the library’s row-vector matmul convention)
+- backward correctness for stage weights using finite differences on a scalar loss `sum_i gy_i * y_i` for `n=4`
+
+Inputs:
+
+- small deterministic weights and vectors (`n=4`, `n=8`)
+
+### MNIST IDX loader (`tests/test_mnist_loader.cpp`)
+
+Tested:
+
+- loading a tiny synthetic IDX dataset written to a temporary directory (2 samples)
+
 ### Attention and transformer modules
 
 - `tests/test_multihead_attention.cpp`
@@ -76,6 +96,7 @@ Inputs:
   - forward/backward shape checks
 - `tests/test_nn_ops.cpp`
   - cross-entropy output and gradient shape checks
+  - rank-2 softmax rows + cross-entropy helpers used by MNIST training
 - `tests/test_decoder_only_transformer.cpp`
   - decoder model forward/backward shape checks across full stack
 
@@ -114,6 +135,8 @@ Generate gcov output (example):
 gcov -b -s ../src \
   CMakeFiles/vadugrad.dir/src/tensor.cpp.gcno \
   CMakeFiles/vadugrad.dir/src/dense_linear.cpp.gcno \
+  CMakeFiles/vadugrad.dir/src/butterfly_linear.cpp.gcno \
+  CMakeFiles/vadugrad.dir/src/mnist.cpp.gcno \
   CMakeFiles/vadugrad.dir/src/multihead_attention.cpp.gcno
 ```
 

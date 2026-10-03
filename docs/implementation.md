@@ -2,19 +2,23 @@
 
 This document summarizes the current implementation status for the Algorithms and AI project repository.
 
+**Peer reviewers:** for build commands, test expectations, MNIST filenames, and a concise code map (butterfly, MNIST, training app), see the root **`README.md`** section **For peer reviewers**.
+
 ## 1. Program structure
 
 The repository is organized into small modules:
 
 - `include/vadugrad/core` and `src/`:
   - tensor representation and low-level tensor helpers (`flatten_bt`, `split_heads`, etc.)
+- `include/vadugrad/data` and `src/`:
+  - MNIST IDX file loading (`mnist.cpp`)
 - `include/vadugrad/nn` and `src/`:
-  - neural-network components (`DenseLinear`, `MultiHeadAttention`, `LayerNorm`, `FeedForward`, `Embedding`, `TransformerBlock`, `DecoderOnlyTransformer`)
+  - neural-network components (`DenseLinear`, `ButterflyLinear`, `MultiHeadAttention`, `LayerNorm`, `FeedForward`, `Embedding`, `TransformerBlock`, `DecoderOnlyTransformer`)
   - activation and loss-related operations
 - `include/vadugrad/optim` and `src/`:
   - optimizer (`Adam`)
 - `apps/`:
-  - runnable demos (`train_lm`)
+  - runnable demos (`train_lm`, `train_mnist`)
 - `tests/`:
   - GoogleTest unit and integration tests
 
@@ -38,6 +42,16 @@ Let:
 - `Dh = D/H`
 - `F` = feed-forward hidden dimension
 - `L` = number of transformer blocks
+- `S` = number of butterfly stages (here `S = log2(n)` for `ButterflyLinear`)
+
+### Butterfly linear map (square `n`, block size 2)
+
+Implemented as `ButterflyLinear` with `n` a power of two and `S = log2(n)` stages.
+
+- Forward time (per batch): `O(B * n * S)` = `O(B * n * log n)`
+- Parameters: `S * (n/2) * 4` = `O(n log n)`
+
+This is meant as a review-friendly first butterfly building block (fixed `2x2` blocks and a fixed FFT-style pairing schedule).
 
 ### Multi-head attention (single block)
 
@@ -77,7 +91,9 @@ Backward pass is same order of magnitude (constant factors larger).
 - Main bottlenecks:
   - repeated temporary tensor allocations
   - `T^2` attention loops
+  - `Tensor::operator()` builds a `std::vector<int>` and bounds-checks on each access
   - no SIMD/BLAS acceleration
+- `Adam` stores moment buffers keyed by `param.data()`. Reallocating a parameter tensor (new storage) resets those moments.
 
 ## 4. Known limitations and improvement ideas
 
@@ -94,16 +110,20 @@ Planned improvements:
 3. Add optional faster tensor kernels for common shapes
 4. Add lightweight checkpoint save/load
 
-## 5. Use of large language models
+## 5. Version management and language-model assistance
 
-Large language model assistance was used during development for:
+I started this course in spring 2026 and did not finish the project then (course staff can confirm that). The C++ in this repository is that implementation.
+
+This autumn I used the Cursor editor to sort out git between last semester’s local history and the current public remote (week-by-week snapshots, file names, commit messages).
+
+Language-model assistance was also used during development for:
 
 - API design iteration
 - boilerplate generation for repetitive module/test scaffolding
 - code-review style feedback on shape contracts and error handling
 - documentation drafting
 
-The implementation, adaptation to this repository, debugging, and validation were performed in this codebase with local build/test execution.
+The implementation, adaptation to this repository, debugging, and validation were done in this codebase with local build and test runs.
 
 ## 6. Sources used
 

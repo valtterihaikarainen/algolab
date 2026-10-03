@@ -5,6 +5,7 @@
 
 namespace {
 unsigned int next_u32(unsigned int& state) {
+    // Marsaglia xorshift32: small deterministic PRNG for reproducible tests/demos.
     state ^= state << 13;
     state ^= state >> 17;
     state ^= state << 5;
@@ -13,7 +14,8 @@ unsigned int next_u32(unsigned int& state) {
 
 float uniform_01(unsigned int& state) {
     const unsigned int x = next_u32(state);
-    return static_cast<float>((x + 1.0) / 4294967297.0);
+    constexpr double kUint32RangePlusOne = 4294967297.0;  // 2^32 + 1, keeps samples inside open interval (0, 1).
+    return static_cast<float>((x + 1.0) / kUint32RangePlusOne);
 }
 }  // namespace
 
@@ -25,7 +27,8 @@ void initialize_tensor_normal(Tensor& tensor, float stddev, unsigned int& seed) 
         const float u1 = uniform_01(seed);
         const float u2 = uniform_01(seed);
         const float r = std::sqrt(-2.0f * std::log(u1));
-        const float theta = 6.28318530718f * u2;
+        constexpr float kTwoPi = 6.28318530718f;
+        const float theta = kTwoPi * u2;
         const float z0 = r * std::cos(theta);
         const float z1 = r * std::sin(theta);
         tensor.data()[i] = z0 * stddev;
