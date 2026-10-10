@@ -150,6 +150,6 @@ Peer reviewers: the table in **For peer reviewers** lists the same paths with sh
 | Implementation | [docs/implementation.md](docs/implementation.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
 | User guide | [docs/user-guide.md](docs/user-guide.md) |
-| Weekly reports | [week 1](weekly-reports/week1.md), [week 2](weekly-reports/week2.md), [week 3](weekly-reports/week3.md), [week 4](weekly-reports/week4.md), [week 5](weekly-reports/week5.md) |
+| Weekly reports | [week 1](weekly-reports/week1.md), [week 2](weekly-reports/week2.md), [week 3](weekly-reports/week3.md), [week 4](weekly-reports/week4.md), [week 5](weekly-reports/week5.md), [week 6](weekly-reports/week6.md) |
 
 Course documentation requirements: [Documentation](https://algolabra-hy.github.io/documentation-en), [Suggested schedule](https://algolabra-hy.github.io/schedule-en).
