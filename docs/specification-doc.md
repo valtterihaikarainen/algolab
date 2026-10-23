@@ -1,165 +1,207 @@
-### Specification Document 
+# Specification Document
+
+## Administrative information
+
+- **Study programme**: Bachelor's in Mathematics (Theoretical Computer Science)
+- **Project documentation language**: English
+- **Implementation language**: C++17
+- **Languages I can peer-review**: Python and C++
 
 ---
 
-### Administrative information
+## Problem being solved
 
-- **Study programme**: Bachelor’s in Mathematics (Theoretical Computer Science)
-- **Project documentation language**: English.  
+### Goal
 
----
+This project asks whether a **butterfly-structured linear layer** can replace a
+**dense linear layer** in a small neural network without a meaningful loss in accuracy,
+while using far fewer parameters and arithmetic operations.
 
-### Programming languages
+Everything is implemented from scratch in C++: tensors, forward and backward passes,
+and the optimizer. No machine-learning libraries or automatic differentiation are used.
 
-- **Primary implementation language**: **C++** (C++17 or later).  
-- I review projects written in **Python** and **C++** 
+### Background: why butterfly layers?
 
----
+**A neural network layer is a matrix multiplication.** A neural network turns an input
+(here a 28×28 image flattened into 784 numbers) into an output (here 10 scores, one per
+digit) by passing it through layers. The most common layer is the **dense (fully
+connected) layer**, which multiplies the input vector by a weight matrix *W* and adds a
+bias vector *b*: *y = Wx + b*. Training adjusts *W* and *b* so that the network's answers
+improve. The adjustments are computed with **backpropagation**, which applies the chain
+rule to find how much each weight contributed to the error.
 
-### Current scope (week 5)
+**Dense layers grow quadratically.** A dense layer from *n* inputs to *n* outputs stores an
+*n × n* matrix: *n²* weights and *n²* multiplications per input. Doubling the width makes
+the layer four times as expensive, and in large models these matrices dominate memory use
+and running time.
 
-The original plan below (dense vs butterfly MLP on MNIST, from-scratch backprop) is still the **core**. The repository now also includes that butterfly layer (`ButterflyLinear`), MNIST loading/training (`train_mnist`), and a decoder-only transformer stack (`train_lm`) built on the same tensor and dense-linear primitives. No PyTorch or automatic differentiation.
+**The idea: borrow the structure of the FFT.** Some *n × n* matrices can be applied much
+faster than *n²*. The classic example is the Discrete Fourier Transform: direct
+multiplication costs *O(n²)*, but the Fast Fourier Transform (FFT) computes the same result
+in *O(n log n)* by divide and conquer, the same principle as merge sort. The FFT can be
+written as a product of log₂ *n* very sparse matrices, each of which only mixes **pairs**
+of positions with a small 2×2 operation. Drawn as a diagram, the connections look like
+butterfly wings. For *n* = 4:
 
----
+```mermaid
+flowchart LR
+    x0 --> a0
+    x0 --> a1
+    x1 --> a0
+    x1 --> a1
+    x2 --> a2
+    x2 --> a3
+    x3 --> a2
+    x3 --> a3
+    a0 --> y0
+    a0 --> y2
+    a2 --> y0
+    a2 --> y2
+    a1 --> y1
+    a1 --> y3
+    a3 --> y1
+    a3 --> y3
+```
 
-### Algorithms and data structures to be implemented
+In stage *s* (counting from 0), position *i* is paired with position *i* XOR 2^*s*: stage 0
+mixes neighbours (0,1), (2,3); stage 1 mixes (0,2), (1,3). After log₂ *n* stages every
+output depends on every input, just as in a dense layer.
 
-- **Feed‑forward neural network (MLP)** for MNIST classification:
-  - Input layer of size 784 (flattened 28×28 image).
-  - One or two hidden layers with nonlinearity (e.g. ReLU or tanh).
-  - Output layer with 10 units and softmax.
+A **butterfly layer** keeps the FFT's wiring but replaces its fixed 2×2 operations with
+**learnable** 2×2 weight blocks, trained by backpropagation like any other weights
+(Dao et al., 2019). Each stage has *n*/2 blocks of 4 weights, so the layer has
+2*n* log₂ *n* weights (plus *n* biases):
 
-- **From‑scratch backpropagation**:
-  - Forward and backward pass for:
-    - Dense linear layer (matrix–vector product + bias).
-    - Butterfly linear layer (see below).
-    - Activation functions (ReLU/tanh) and softmax + cross‑entropy loss.
-  - Parameter updates using (stochastic) gradient descent or simple SGD with momentum.
+| Width *n* | Dense weights (*n²*) | Butterfly weights (2*n* log₂ *n*) | Ratio |
+|-----------|----------------------|-----------------------------------|-------|
+| 8         | 64                   | 48                                | 1.3×  |
+| 64        | 4,096                | 768                               | 5.3×  |
+| 512       | 262,144              | 9,216                             | 28×   |
+| 4,096     | 16,777,216           | 98,304                            | 171×  |
 
-- **Butterfly‑structured linear layer**:
-  - A linear layer where the weight matrix is **factorized into butterfly stages**:
-    - Each stage is block‑diagonal with small \(b \times b\) blocks (e.g. \(b \in \{2, 4, 16\}\)) and a fixed “butterfly” connectivity pattern between stages.
-    - This generalizes the FFT butterfly structure but with learnable block parameters.
-  - Full forward and backward implementations in C++, including gradient computation w.r.t. block parameters and input activations.
+**The catch.** A butterfly layer cannot represent every matrix: it has far fewer free
+parameters than *n²*, so it can only express matrices with this particular structure.
+Whether that restriction hurts on a real learning task is the question this project
+tests. The question is practically relevant: structured matrices descended from this idea,
+such as Monarch matrices (Dao et al., 2022), are used to make large models cheaper to
+train. It also links two parts of this course: a classical algorithm (the FFT) is reused
+as the structure of a learnable model.
 
-- **Data handling and simple containers**:
-  - Storage of parameters and activations using either:
-    - Standard library containers (`std::vector`) and manual indexing
-  - Mini‑batch loading and normalization for MNIST.
+### Experiment
 
-No automatic differentiation or high‑level deep learning libraries (e.g. PyTorch, TensorFlow) will be used; all gradient calculations will be coded manually.
+The task is classifying MNIST handwritten digits. Three networks are trained with
+identical hyperparameters (Adam, same learning rate, batch size and epochs) and identical
+random seeds. Each network is 784 → 512 → ReLU → *hidden layer* → ReLU → 10, and they
+differ only in the hidden 512 → 512 layer. The ReLU after the hidden layer is essential:
+without it, the hidden layer and the output layer would collapse into a single linear map,
+and all three variants could represent exactly the same functions.
 
----
+| Variant     | Hidden layer                    | Parameters | Multiply-adds per image |
+|-------------|---------------------------------|------------|-------------------------|
+| `none`      | skipped (784 → 512 → 10 only)   | 0          | 0                       |
+| `dense`     | full 512×512 matrix + bias      | 262,656    | 262,144                 |
+| `butterfly` | 9 stages of 2×2 blocks + bias   | 9,728      | 9,216                   |
 
-### Problem being solved
+`none` is a lower bound: it shows whether a hidden mixing layer helps at all. The butterfly
+replaces the hidden layer rather than the first layer because the butterfly needs a
+power-of-two width, and 784 is not one.
 
-The project studies whether **butterfly‑structured linear layers** can be used as a drop‑in replacement for standard dense layers in a small neural network trained on MNIST, when everything is implemented from scratch in C++. Dense layers are simple but use \(O(n^2)\) parameters and do not exploit possible structure in the weight matrix. Butterfly layers factor the weight matrix into a product of sparse stages with small blocks, potentially reducing parameter count and operation count.
+**Measured:** accuracy on the 10,000-image MNIST test set, parameter count of the hidden
+layer, and training time per epoch.
 
-The core question is: **Can a small MLP with butterfly layers, trained via manual backpropagation in C++, achieve reasonable classification accuracy on MNIST, and how does it compare to a standard dense MLP in terms of accuracy and complexity?**
-
----
-
-### Inputs and how they are used
-
-- **MNIST dataset**:
-  - Training and test images (28×28 grayscale) and labels (0–9).
-  - Images are flattened into 784‑dimensional vectors and optionally normalized (e.g. pixel values scaled to \([0,1]\)).
-  - Used as input–label pairs for training and evaluating the network.
-
-- **Configuration parameters**:
-  - Network architecture (hidden layer size, choice of activation).
-  - Whether the first (and/or second) linear layer is **dense** or **butterfly‑structured**.
-  - Butterfly hyperparameters:
-    - Block size \(b\) (e.g. 2, 4, 16).
-    - Number of butterfly stages \(L\).
-  - Training hyperparameters:
-    - Learning rate, batch size, number of epochs, optional momentum.
-
-During training, the program repeatedly:
-
-1. Reads mini‑batches of MNIST images and labels.  
-2. Runs the forward pass through the network (including butterfly or dense layers).  
-3. Computes softmax cross‑entropy loss.  
-4. Runs backpropagation to compute gradients.  
-5. Updates parameters using SGD.
-
-At the end, it evaluates accuracy on the MNIST test set and prints summary metrics.
-
----
-
-### Expected time and space complexities
-
-Let:
-
-- \(n\) be the input or hidden layer width (e.g. 784 or 128),  
-- \(m\) be the next layer width,  
-- \(b\) be the butterfly block size,  
-- \(L\) be the number of butterfly stages,  
-- \(B\) be the mini‑batch size, and  
-- \(T\) be the total number of training steps (batches over all epochs).
-
-**Dense linear layer**
-
-- Forward (per batch):
-  - Time: \(\Theta(B \cdot n \cdot m)\) operations (matrix–batch multiplication).
-- Backward (per batch):
-  - Time: \(\Theta(B \cdot n \cdot m)\) to compute gradients w.r.t. weights and inputs.
-- Parameters:
-  - \(\Theta(n \cdot m)\) weights + \(\Theta(m)\) biases.
-
-**Butterfly linear layer**
-
-Assume an \(n \times n\) butterfly layer with \(L\) stages and block size \(b\) (for simplicity, applied to a hidden layer of width \(n\)).
-
-- Each stage:
-  - Has \(n/b\) independent \(b \times b\) blocks.
-  - Forward cost per vector: \(\Theta((n/b) \cdot b^2) = \Theta(n \cdot b)\).
-- Forward (per batch):
-  - Time: \(\Theta(B \cdot L \cdot n \cdot b)\).
-- Backward (per batch):
-  - Similar order: \(\Theta(B \cdot L \cdot n \cdot b)\) to propagate gradients through all stages and blocks.
-- Parameters:
-  - Per stage: \(\Theta((n/b) \cdot b^2) = \Theta(n \cdot b)\).
-  - Total: \(\Theta(L \cdot n \cdot b)\) parameters (plus \(\Theta(n)\) biases if used).
-
-For moderate block sizes \(b\) and \(L = O(\log n)\), butterfly layers can have fewer parameters and potentially lower per‑vector cost than dense layers of comparable width.
-
-**Backpropagation and training loop**
-
-- Per training step (one mini‑batch), time is dominated by the forward and backward passes of all layers:
-  - For a simple 2‑layer MLP, roughly:
-    - Dense baseline: \(\Theta(B \cdot n \cdot m)\) per layer, twice for forward + backward.
-    - Butterfly variant: replace one dense layer by \(\Theta(B \cdot L \cdot n \cdot b)\).
-- Total training time:
-  - \(\Theta(T \cdot \text{cost\_per\_step})\), where \(T\) is the total number of mini‑batches.
-- Space:
-  - Parameters and intermediate activations:
-    - \(\Theta(n \cdot m)\) for dense layers,
-    - \(\Theta(L \cdot n \cdot b)\) for butterfly layers,
-    - plus \(\Theta(B \cdot n)\) for activations stored during backprop.
-
-I will use typical MNIST sizes (e.g. \(n = 784\), hidden size 128, batch sizes like 32 or 64, moderate \(L\) and \(b\)), which should keep training time and memory usage well within the limits for this course.
+**Hypothesis:** the butterfly variant reaches test accuracy close to the dense variant
+(within about one percentage point) with roughly 27× fewer parameters in the hidden layer.
 
 ---
 
-### List of sources I intend to use
+## Algorithms and data structures
 
-Preliminary list (to be expanded and properly cited in the final report):
+- **Tensor**: a row-major multidimensional array (`std::vector<float>` plus shape and
+  strides) with element access, matrix multiplication, transpose and reductions.
+- **Dense linear layer**: forward *y = xW + b* and manual backward pass for the input,
+  weights and bias.
+- **Butterfly linear layer**: log₂ *n* stages of *n*/2 learnable 2×2 blocks with the
+  FFT-style pairing above, plus a bias; manual backward pass for the input, every block
+  and the bias.
+- **ReLU activation** and **softmax with cross-entropy loss** (numerically stable via the
+  log-sum-exp trick), with their gradients.
+- **Adam optimizer**: per-parameter first and second moment estimates with bias
+  correction.
+- **MNIST IDX loader**: reads the binary image and label files and scales pixels to [0, 1].
 
-- Standard material on feed‑forward neural networks and backpropagation:
-  - Michael Nielsen, *“Neural Networks and Deep Learning”* (online book).
-  - Selected sections from Goodfellow et al., *“Deep Learning”*.
-- Resources on butterfly and structured linear layers:
-  - Tri Dao et al., **“Learning Fast Algorithms for Linear Transforms”**, ICML 2019.  
-  - Tri Dao et al., **“Monarch Matrices: Expressive Structured Matrices from Simple Building Blocks”**, ICML 2022.  
-  - Classical FFT / butterfly network explanations (textbook or online).
-- MNIST dataset documentation and description.
-- C++ references for efficient numerical programming and (if used) Eigen/Armadillo documentation.
+## Inputs and how they are used
+
+- **MNIST data**: the four standard IDX files (`train-*` with 60,000 images, `t10k-*` with
+  10,000 images). Each image is flattened to a 784-dimensional vector. Training uses the
+  `train` files in shuffled mini-batches; the `t10k` files are used only for the final
+  test accuracy.
+- **Command-line options**: network variant (`none`, `dense`, `butterfly`), number of
+  epochs, batch size, learning rate, random seed, data directory, and an optional CSV log
+  file.
+
+Each training step reads a mini-batch, runs the forward pass, computes the cross-entropy
+loss, backpropagates gradients through every layer, and updates parameters with Adam.
 
 ---
 
-### Core of my project (short description)
+## Expected time and space complexity
 
-The core of my project is to **implement from scratch in C++ a small feed‑forward neural network with both dense and butterfly‑structured linear layers, including full backpropagation and training on MNIST**, and to compare their behavior.
+Let *B* be the batch size, *n* the hidden width (512), and *d* = 784 the input width.
 
-I will first build a baseline MLP with standard dense layers and manual backprop, and train it to classify MNIST digits. Then I will implement a butterfly linear layer, where the weight matrix is expressed as a product of sparse stages with small \(b \times b\) blocks following a butterfly pattern, and derive and code its forward and backward passes. By replacing one of the dense layers with a butterfly layer and training this network on MNIST, I will measure classification accuracy, parameter counts, and per‑forward‑pass operation counts. This allows me to study, in a controlled and fully self‑implemented setting, how a structured butterfly layer compares to a standard dense layer in a simple but realistic machine‑learning task.
+| Operation (per batch)        | Dense *n → n*      | Butterfly *n → n*         |
+|------------------------------|--------------------|---------------------------|
+| Forward time                 | Θ(*B n²*)          | Θ(*B n* log *n*)          |
+| Backward time                | Θ(*B n²*)          | Θ(*B n* log *n*)          |
+| Parameters                   | Θ(*n²*)            | Θ(*n* log *n*)            |
+| Stored activations           | Θ(*B n*)           | Θ(*B n* log *n*)          |
+
+The butterfly cost comes from log₂ *n* stages, each applying *n*/2 independent 2×2 blocks
+(4 multiply-adds per pair, so Θ(*n*) per stage per input). The backward pass visits the
+same pairs in reverse order, so it has the same order. The butterfly stores the input of
+every stage for the backward pass, hence the extra log *n* factor in activation memory.
+
+The whole network costs Θ(*B d n*) per batch for the first layer in every variant, so the
+first layer dominates the running time. One epoch costs Θ(*N d n*) for *N* = 60,000
+training images. The difference between variants is therefore clearest in the hidden
+layer's parameter count and operation count, not in the total time.
+
+---
+
+## Core of the project
+
+The core is implementing **from scratch in C++ a small feed-forward network with both
+dense and butterfly-structured linear layers, including their full backpropagation**, and
+comparing the two on MNIST. The essential parts are the butterfly layer's forward and
+backward passes and convincing tests that they are correct. MNIST loading, the command
+line and the plotting script are supporting code.
+
+---
+
+## Changes from the original plan
+
+The original week 1 plan is kept as the core. Three changes were made during the course:
+
+- **Fixed 2×2 blocks.** The original plan mentioned block sizes *b* ∈ {2, 4, 16}. The
+  implementation uses *b* = 2 with log₂ *n* stages, which is the classic FFT structure and
+  already gives the full *O(n log n)* versus *O(n²)* comparison.
+- **Adam instead of plain SGD.** Adam converges reliably without tuning a momentum
+  schedule, which keeps the comparison between variants fair with one shared set of
+  hyperparameters.
+- **Transformer removed.** For a while the repository also contained a decoder-only
+  transformer built on the same primitives. It was not part of the original plan and has
+  been removed from the main branch to keep the project focused on the question above.
+
+---
+
+## Sources
+
+- Tri Dao, Albert Gu, Matthew Eichhorn, Atri Rudra, Christopher Ré: *Learning Fast
+  Algorithms for Linear Transforms Using Butterfly Factorizations*. ICML 2019.
+- Tri Dao et al.: *Monarch: Expressive Structured Matrices for Efficient and Accurate
+  Training*. ICML 2022.
+- Cormen, Leiserson, Rivest, Stein: *Introduction to Algorithms*, 3rd ed., chapter 30
+  (Polynomials and the FFT).
+- Michael Nielsen: *Neural Networks and Deep Learning* (online book), chapters 1–2.
+- Goodfellow, Bengio, Courville: *Deep Learning*, chapters 6 and 8.
+- Diederik Kingma, Jimmy Ba: *Adam: A Method for Stochastic Optimization*. ICLR 2015.
+- Yann LeCun et al.: MNIST database of handwritten digits.

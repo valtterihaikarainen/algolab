@@ -1,106 +1,111 @@
 # User Guide
 
-## Peer review quick path
-
-If you are reviewing this repository, start with the root **`README.md`** section **For peer reviewers**: it lists the exact build and test commands, optional demos, MNIST file names, and a code map. This guide repeats executable details and flags below.
-
 ## 1. Requirements
 
-- CMake >= 3.20
-- C++17 compiler
-- Network access for first configure (GoogleTest is fetched by CMake)
+- A C++17 compiler (GCC or Clang) and CMake 3.20 or newer
+- `curl` and `gunzip` for downloading MNIST
+- Network access for the first CMake configure (GoogleTest is downloaded automatically)
+- Optional: Python 3 with matplotlib for the results plot, `gcovr` for the coverage report
 
-## 2. Build
+Tested on Linux (GCC, aarch64) and macOS (Apple Clang, Apple Silicon). On macOS, CMake can be
+installed with `brew install cmake`; everything else comes with the Xcode command-line tools.
 
-From repository root:
+If GoogleTest cannot be downloaded (for example offline), point CMake at a local copy:
+`-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/path/to/googletest`.
+
+## 2. Building
+
+Use a **Release** build for training: it is compiled with optimizations and is many times
+faster than a Debug build.
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-## 3. Running executables
+This produces two executables: `build/train_mnist` (the experiment) and `build/tests` (the
+test suite).
 
-### `vadugrad` (basic CLI demo)
-
-```bash
-./build/vadugrad
-./build/vadugrad --help
-```
-
-This runs a small dense-layer forward/backward sanity demonstration.
-
-### `vadugrad butterfly` (butterfly linear demo)
+## 3. Getting the MNIST data
 
 ```bash
-./build/vadugrad butterfly
+scripts/download_mnist.sh            # downloads into data/mnist
+scripts/download_mnist.sh other/dir  # or into another directory
 ```
 
-This prints a small butterfly linear map sanity check:
+The script downloads and unpacks the four standard MNIST files. It skips files that are
+already present, so it is safe to run again. The resulting directory contains:
 
-- builds an explicit dense matrix by applying the butterfly map to each basis vector
-- compares `butterfly_forward(x)` to `x @ dense_matrix^T` (transpose matches the row-vector convention used elsewhere in the project)
-- prints one backward statistic (`dL/dx` at index 0) and an example weight gradient block
+| File                        | Contents                     |
+|-----------------------------|------------------------------|
+| `train-images-idx3-ubyte`   | 60,000 training images       |
+| `train-labels-idx1-ubyte`   | their labels (digits 0–9)    |
+| `t10k-images-idx3-ubyte`    | 10,000 test images           |
+| `t10k-labels-idx1-ubyte`    | their labels                 |
 
-### `train_lm` (tiny decoder-only transformer training demo)
+`data/` is listed in `.gitignore`, so the dataset is never committed.
+
+## 4. Training a network
 
 ```bash
-./build/train_lm
+./build/train_mnist --variant butterfly --epochs 5
 ```
 
-This runs a small synthetic next-token training loop and prints loss values. The expected behavior is that loss decreases over training steps.
+| Option                          | Meaning                                              | Default      |
+|---------------------------------|------------------------------------------------------|--------------|
+| `--variant none\|dense\|butterfly` | Type of the hidden 512 → 512 layer                | `butterfly`  |
+| `--epochs N`                    | Passes over the 60,000 training images               | 3            |
+| `--batch B`                     | Mini-batch size                                      | 64           |
+| `--lr X`                        | Adam learning rate                                   | 0.001        |
+| `--seed S`                      | Positive integer; fixes initial weights and data order | 1          |
+| `--data DIR`                    | Directory containing the MNIST files                 | `data/mnist` |
+| `--log FILE`                    | Also write one CSV row per epoch to `FILE`           | off          |
+| `--help`                        | Print the options                                    |              |
 
-### `train_mnist` (MNIST MLP trainer: dense vs butterfly hidden map)
+Example output:
+
+```text
+variant=butterfly seed=1 hidden_params=9728 total_params=416778
+epoch=1 train_loss=0.2533 test_loss=0.1076 test_accuracy=0.9679 epoch_seconds=11.5759
+...
+```
+
+- `hidden_params`: learnable values in the hidden layer only (0, 262,656 or 9,728).
+- `train_loss`: mean cross-entropy over the epoch's training batches.
+- `test_loss`, `test_accuracy`: measured on all 10,000 test images after the epoch.
+  Accuracy is a fraction: 0.9679 means 96.79 % correct.
+- `epoch_seconds`: wall-clock time of the training pass (evaluation excluded).
+
+Running the same command twice gives the same numbers, because `--seed` fixes both the
+initial weights and the order of the training data. This holds for one compiler and standard
+library: the data order comes from `std::shuffle`, whose algorithm differs between GCC's
+libstdc++ and Clang's libc++, so Linux and macOS runs with the same seed give slightly
+different results. The program exits with an error message
+for unknown options, missing values, a non-power-of-two butterfly width, or missing data
+files.
+
+## 5. Reproducing the experiment
 
 ```bash
-./build/train_mnist --help
+mkdir -p results
+for seed in 1 2 3; do
+  for variant in none dense butterfly; do
+    ./build/train_mnist --variant $variant --seed $seed --epochs 5 \
+      --log results/${variant}_seed${seed}.csv
+  done
+done
+python3 scripts/plot_results.py results docs/img/test_curves.png
 ```
 
-**Data layout:** the directory passed to `--data` (default: `data/mnist`) must contain these **exact** training IDX filenames (standard MNIST distribution):
+`plot_results.py` prints the results table (mean and standard deviation over seeds) and
+saves the test-loss and test-accuracy plot. Run the variants one at a time, as above, so
+that the timings are not distorted by runs competing for the CPU.
 
-- `train-images-idx3-ubyte`
-- `train-labels-idx1-ubyte`
-
-The unit test suite does **not** require these files; see `tests/test_mnist_loader.cpp` for a synthetic minimal IDX fixture.
-
-**Variants:** the hidden block after the first ReLU uses `ButterflyLinear` by default (`n=784`). Pass `--dense` to use an identity hidden map (same tensor shape, no butterfly parameters). `--butterfly` is the default and may be given explicitly for clarity.
-
-Examples (after placing MNIST files under `data/mnist/`):
+## 6. Running the tests
 
 ```bash
-./build/train_mnist --data data/mnist --epochs 1 --batch 64 --lr 1e-3
-./build/train_mnist --data data/mnist --dense
-./build/train_mnist --data data/mnist --butterfly
+./build/tests          # or: cd build && ctest --output-on-failure
 ```
 
-## 4. Running tests
-
-```bash
-cd build
-ctest --output-on-failure
-```
-
-Or directly:
-
-```bash
-./build/tests
-```
-
-## 5. Coverage run (optional)
-
-```bash
-cmake -S . -B build-coverage -DENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-coverage
-cd build-coverage
-ctest --output-on-failure
-```
-
-Then use `gcov` / `lcov` as described in `README.md` and `docs/testing.md`.
-
-## 6. Input format notes
-
-- The transformer APIs expect tensor-shaped input data:
-  - token ids: `[batch, time]`
-  - model activations: `[batch, time, d_model]`
-  - logits: `[batch, time, vocab_size]`
-- In training demos, token ids are currently represented as float values in `Tensor` and cast to integer indices at usage sites.
+The tests use synthetic data and do not need the MNIST download. For a coverage report, see
+the [testing document](testing.md#5-reproducing-the-tests-and-coverage).

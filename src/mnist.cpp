@@ -1,6 +1,9 @@
 /**
  * @file mnist.cpp
- * @brief Minimal MNIST IDX reader.
+ * @brief MNIST IDX reader.
+ *
+ * IDX files start with a big-endian header (magic number, item count and, for images, the
+ * row and column counts) followed by one unsigned byte per pixel or label.
  */
 
 #include <vadugrad/data/mnist.hpp>
@@ -13,106 +16,93 @@
 
 namespace {
 
+constexpr std::int32_t kImageMagic = 2051;
+constexpr std::int32_t kLabelMagic = 2049;
+constexpr int kImageSide = 28;
+constexpr int kPixelsPerImage = kImageSide * kImageSide;
+
 std::vector<unsigned char> read_entire_file(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
         throw std::runtime_error("MNIST: could not open file: " + path);
     }
-    f.seekg(0, std::ios::end);
-    const std::streamoff sz = f.tellg();
-    if (sz <= 0) {
+    file.seekg(0, std::ios::end);
+    const std::streamoff size = file.tellg();
+    if (size <= 0) {
         throw std::runtime_error("MNIST: empty file: " + path);
     }
-    f.seekg(0, std::ios::beg);
-    std::vector<unsigned char> buf(static_cast<std::size_t>(sz));
-    f.read(reinterpret_cast<char*>(buf.data()), sz);
-    if (!f) {
+    file.seekg(0, std::ios::beg);
+    std::vector<unsigned char> bytes(static_cast<std::size_t>(size));
+    file.read(reinterpret_cast<char*>(bytes.data()), size);
+    if (!file) {
         throw std::runtime_error("MNIST: failed reading file: " + path);
     }
-    return buf;
+    return bytes;
+}
+
+std::int32_t read_u32_big_endian(const std::vector<unsigned char>& bytes, std::size_t offset) {
+    return (static_cast<std::int32_t>(bytes[offset]) << 24) |
+           (static_cast<std::int32_t>(bytes[offset + 1]) << 16) |
+           (static_cast<std::int32_t>(bytes[offset + 2]) << 8) |
+           static_cast<std::int32_t>(bytes[offset + 3]);
+}
+
+/** Parse an IDX3 image file into [N, 784] pixels scaled to [0, 1]. */
+Tensor read_idx_images(const std::string& path) {
+    const std::vector<unsigned char> bytes = read_entire_file(path);
+    constexpr std::size_t kHeaderSize = 16;
+    if (bytes.size() < kHeaderSize) {
+        throw std::runtime_error("MNIST: images file too small for header: " + path);
+    }
+    if (read_u32_big_endian(bytes, 0) != kImageMagic) {
+        throw std::runtime_error("MNIST: bad magic number in images file: " + path);
+    }
+    const int count = read_u32_big_endian(bytes, 4);
+    if (read_u32_big_endian(bytes, 8) != kImageSide || read_u32_big_endian(bytes, 12) != kImageSide) {
+        throw std::runtime_error("MNIST: expected 28x28 images: " + path);
+    }
+    if (count <= 0 ||
+        bytes.size() < kHeaderSize + static_cast<std::size_t>(count) * kPixelsPerImage) {
+        throw std::runtime_error("MNIST: image data truncated: " + path);
+    }
+
+    Tensor images({count, kPixelsPerImage});
+    for (int i = 0; i < count * kPixelsPerImage; ++i) {
+        images.data()[i] = static_cast<float>(bytes[kHeaderSize + static_cast<std::size_t>(i)]) / 255.0f;
+    }
+    return images;
+}
+
+/** Parse an IDX1 label file into [N, 1] class ids. */
+Tensor read_idx_labels(const std::string& path) {
+    const std::vector<unsigned char> bytes = read_entire_file(path);
+    constexpr std::size_t kHeaderSize = 8;
+    if (bytes.size() < kHeaderSize) {
+        throw std::runtime_error("MNIST: labels file too small for header: " + path);
+    }
+    if (read_u32_big_endian(bytes, 0) != kLabelMagic) {
+        throw std::runtime_error("MNIST: bad magic number in labels file: " + path);
+    }
+    const int count = read_u32_big_endian(bytes, 4);
+    if (count <= 0 || bytes.size() < kHeaderSize + static_cast<std::size_t>(count)) {
+        throw std::runtime_error("MNIST: label data truncated: " + path);
+    }
+
+    Tensor labels({count, 1});
+    for (int i = 0; i < count; ++i) {
+        labels.data()[i] = static_cast<float>(bytes[kHeaderSize + static_cast<std::size_t>(i)]);
+    }
+    return labels;
 }
 
 }  // namespace
 
-MnistDataset load_mnist_train(const std::string& dir) {
-    const std::string img_path = dir + "/train-images-idx3-ubyte";
-    const std::string lbl_path = dir + "/train-labels-idx1-ubyte";
-
-    const std::vector<unsigned char> img_bytes = read_entire_file(img_path);
-    const std::vector<unsigned char> lbl_bytes = read_entire_file(lbl_path);
-
-    std::vector<unsigned char> img = img_bytes;
-    std::vector<unsigned char> lbl = lbl_bytes;
-
-    auto u32_be = [](const std::vector<unsigned char>& bytes, int off) {
-        return (static_cast<int32_t>(bytes[static_cast<std::size_t>(off)]) << 24) |
-               (static_cast<int32_t>(bytes[static_cast<std::size_t>(off + 1)]) << 16) |
-               (static_cast<int32_t>(bytes[static_cast<std::size_t>(off + 2)]) << 8) |
-               static_cast<int32_t>(bytes[static_cast<std::size_t>(off + 3)]);
-    };
-
-    auto read_image_header = [&](std::vector<unsigned char>& bytes) {
-        if (bytes.size() < 16) {
-            throw std::runtime_error("MNIST: images file too small for header");
-        }
-        const int32_t magic = u32_be(bytes, 0);
-        if (magic != 2051) {
-            throw std::runtime_error("MNIST: bad magic in images");
-        }
-        const int32_t n = u32_be(bytes, 4);
-        const int32_t rows = u32_be(bytes, 8);
-        const int32_t cols = u32_be(bytes, 12);
-        bytes.erase(bytes.begin(), bytes.begin() + 16);
-        return std::tuple<int32_t, int32_t, int32_t>{n, rows, cols};
-    };
-
-    auto read_label_header = [&](std::vector<unsigned char>& bytes) {
-        // IDX1: 4-byte magic + 4-byte number of items (no extra dims).
-        if (bytes.size() < 8) {
-            throw std::runtime_error("MNIST: labels file too small for header");
-        }
-        const int32_t magic = u32_be(bytes, 0);
-        if (magic != 2049) {
-            throw std::runtime_error("MNIST: bad magic in labels");
-        }
-        const int32_t n = u32_be(bytes, 4);
-        bytes.erase(bytes.begin(), bytes.begin() + 8);
-        return n;
-    };
-
-    const auto img_hdr = read_image_header(img);
-    const int32_t num_images = std::get<0>(img_hdr);
-    const int32_t rows = std::get<1>(img_hdr);
-    const int32_t cols = std::get<2>(img_hdr);
-    if (rows != 28 || cols != 28) {
-        throw std::runtime_error("MNIST: expected 28x28 images");
+MnistDataset load_mnist(const std::string& dir, MnistSplit split) {
+    const std::string prefix = dir + (split == MnistSplit::Train ? "/train" : "/t10k");
+    Tensor images = read_idx_images(prefix + "-images-idx3-ubyte");
+    Tensor labels = read_idx_labels(prefix + "-labels-idx1-ubyte");
+    if (images.shape()[0] != labels.shape()[0]) {
+        throw std::runtime_error("MNIST: image and label counts differ in " + prefix);
     }
-    const std::size_t expected_img_payload = static_cast<std::size_t>(num_images) * 28u * 28u;
-    if (img.size() < expected_img_payload) {
-        throw std::runtime_error("MNIST: image payload truncated");
-    }
-    img.resize(expected_img_payload);
-
-    const int32_t num_labels = read_label_header(lbl);
-    if (num_labels != num_images) {
-        throw std::runtime_error("MNIST: label/image count mismatch");
-    }
-    if (lbl.size() < static_cast<std::size_t>(num_labels)) {
-        throw std::runtime_error("MNIST: label payload truncated");
-    }
-    lbl.resize(static_cast<std::size_t>(num_labels));
-
-    Tensor images({num_images, 784});
-    Tensor labels({num_images, 1});
-
-    for (int i = 0; i < num_images; ++i) {
-        for (int p = 0; p < 784; ++p) {
-            const unsigned char px =
-                img[static_cast<std::size_t>(i) * 784u + static_cast<std::size_t>(p)];
-            images({i, p}) = static_cast<float>(px) / 255.0f;
-        }
-        labels({i, 0}) = static_cast<float>(lbl[static_cast<std::size_t>(i)]);
-    }
-
-    return MnistDataset{images, labels};
+    return MnistDataset{std::move(images), std::move(labels)};
 }

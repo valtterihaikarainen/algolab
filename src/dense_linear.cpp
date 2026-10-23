@@ -20,8 +20,7 @@ std::vector<int> checked_linear_weight_shape(int in_features, int out_features) 
 
 DenseLinear::DenseLinear(int in_features, int out_features)
     : weight_(checked_linear_weight_shape(in_features, out_features)),
-      bias_(std::vector<int>{out_features}),
-      gradient_(std::vector<int>{1}) {}
+      bias_(std::vector<int>{out_features}) {}
 
 Tensor& DenseLinear::weight() {
     return weight_;
@@ -61,7 +60,7 @@ Tensor DenseLinear::forward(const Tensor& x) const {
     const int out_dim = y.shape()[1];
     for (int b = 0; b < batch; ++b) {
         for (int o = 0; o < out_dim; ++o) {
-            y({b, o}) += bias_({o});
+            y(b, o) += bias_.data()[o];
         }
     }
     return y;
@@ -80,6 +79,10 @@ DenseLinear::BackwardGradients DenseLinear::backward(const Tensor& x, const Tens
         throw std::invalid_argument("DenseLinear::backward: grad_output shape must be [batch, out_features]");
     }
 
+    // With g = dL/dy and y = x W + b:
+    //   dL/dx = g W^T        each input feeds every output through its row of W
+    //   dL/dW = x^T g        sums the outer products x_b^T g_b over the batch rows b
+    //   dL/db = sum_b g_b    the bias is added to every row
     const Tensor w_t = transpose2d(weight_);
     const Tensor x_t = transpose2d(x);
     return BackwardGradients{matmul(grad_output, w_t), matmul(x_t, grad_output),

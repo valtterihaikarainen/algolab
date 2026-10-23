@@ -1,14 +1,21 @@
-#include <vadugrad/butterfly_linear.hpp>
+/**
+ * @file train_mnist.cpp
+ * @brief Command-line program that trains one network variant on MNIST and reports its test
+ *        accuracy, parameter counts and training time.
+ */
+
 #include <vadugrad/data/mnist.hpp>
-#include <vadugrad/dense_linear.hpp>
-#include <vadugrad/nn/activations.hpp>
+#include <vadugrad/nn/mlp.hpp>
 #include <vadugrad/nn/nn_ops.hpp>
-#include <vadugrad/nn/parameter_init.hpp>
 #include <vadugrad/optim/adam.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <numeric>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -16,198 +23,199 @@
 
 namespace {
 
-struct Args {
+constexpr int kInputDim = 784;
+constexpr int kHiddenDim = 512;
+constexpr int kNumClasses = 10;
+constexpr int kEvalBatch = 1000;
+
+/** Command-line settings; the defaults are the values used in the experiment. */
+struct Options {
     std::string data_dir = "data/mnist";
-    int epochs = 1;
-    int batch = 64;
-    float lr = 1e-3f;
-    bool use_butterfly = true;
+    HiddenVariant variant = HiddenVariant::Butterfly;
+    int epochs = 3;
+    int batch_size = 64;
+    float learning_rate = 1e-3f;
+    unsigned int seed = 1;
+    std::string log_path;
 };
 
-Args parse_args(int argc, char** argv) {
-    Args a;
+void print_usage() {
+    std::cout << "Usage: train_mnist [options]\n"
+                 "  --variant none|dense|butterfly  hidden layer type (default: butterfly)\n"
+                 "  --epochs N                      passes over the training set (default: 3)\n"
+                 "  --batch B                       mini-batch size (default: 64)\n"
+                 "  --lr X                          Adam learning rate (default: 0.001)\n"
+                 "  --seed S                        random seed, positive integer (default: 1)\n"
+                 "  --data DIR                      directory with the MNIST IDX files (default: data/mnist)\n"
+                 "  --log FILE                      also write per-epoch results as CSV\n"
+                 "  --help                          show this message\n";
+}
+
+/** Map "none", "dense" or "butterfly" to a @ref HiddenVariant; throws on anything else. */
+HiddenVariant parse_variant(const std::string& name) {
+    if (name == "none") return HiddenVariant::None;
+    if (name == "dense") return HiddenVariant::Dense;
+    if (name == "butterfly") return HiddenVariant::Butterfly;
+    throw std::invalid_argument("unknown variant '" + name + "' (expected none, dense or butterfly)");
+}
+
+std::string variant_name(HiddenVariant variant) {
+    switch (variant) {
+        case HiddenVariant::None: return "none";
+        case HiddenVariant::Dense: return "dense";
+        case HiddenVariant::Butterfly: return "butterfly";
+    }
+    return "unknown";
+}
+
+/** Read "--name value" pairs into @ref Options; throws on unknown or incomplete options. */
+Options parse_options(int argc, char** argv) {
+    Options options;
     for (int i = 1; i < argc; ++i) {
-        const std::string s = argv[i];
-        if (s == "--data" && i + 1 < argc) {
-            a.data_dir = argv[++i];
-        } else if (s == "--epochs" && i + 1 < argc) {
-            a.epochs = std::stoi(argv[++i]);
-        } else if (s == "--batch" && i + 1 < argc) {
-            a.batch = std::stoi(argv[++i]);
-        } else if (s == "--lr" && i + 1 < argc) {
-            a.lr = std::stof(argv[++i]);
-        } else if (s == "--dense") {
-            a.use_butterfly = false;
-        } else if (s == "--butterfly") {
-            a.use_butterfly = true;
-        } else if (s == "-h" || s == "--help") {
-            std::cout << "train_mnist — tiny MNIST MLP trainer (manual backprop)\n";
-            std::cout << "Usage:\n";
-            std::cout << "  train_mnist [--data DIR] [--epochs N] [--batch B] [--lr X] [--dense|--butterfly]\n";
-            std::cout << "Defaults:\n";
-            std::cout << "  --data data/mnist\n";
-            std::cout << "  --epochs 1 --batch 64 --lr 1e-3\n";
-            std::cout << "  hidden uses butterfly by default; pass --dense for dense hidden map\n";
-            std::cout << "\nExpected MNIST files in DIR:\n";
-            std::cout << "  train-images-idx3-ubyte\n";
-            std::cout << "  train-labels-idx1-ubyte\n";
+        const std::string flag = argv[i];
+        if (flag == "-h" || flag == "--help") {
+            print_usage();
             std::exit(0);
-        } else {
-            throw std::invalid_argument("unknown arg: " + s);
         }
-    }
-    if (a.epochs <= 0 || a.batch <= 0) {
-        throw std::invalid_argument("epochs/batch must be positive");
-    }
-    return a;
-}
-
-Tensor rows_slice(const Tensor& m, int row0, int rows) {
-    if (m.ndim() != 2) {
-        throw std::invalid_argument("rows_slice expects rank-2 tensor");
-    }
-    const int cols = m.shape()[1];
-    Tensor out({rows, cols});
-    for (int r = 0; r < rows; ++r) {
-        for (int c = 0; c < cols; ++c) {
-            out({r, c}) = m({row0 + r, c});
+        if (i + 1 >= argc) {
+            throw std::invalid_argument("missing value for " + flag);
         }
+        const std::string value = argv[++i];
+        if (flag == "--variant") options.variant = parse_variant(value);
+        else if (flag == "--epochs") options.epochs = std::stoi(value);
+        else if (flag == "--batch") options.batch_size = std::stoi(value);
+        else if (flag == "--lr") options.learning_rate = std::stof(value);
+        else if (flag == "--seed") options.seed = static_cast<unsigned int>(std::stoul(value));
+        else if (flag == "--data") options.data_dir = value;
+        else if (flag == "--log") options.log_path = value;
+        else throw std::invalid_argument("unknown option " + flag);
     }
-    return out;
-}
-
-void init_dense(DenseLinear& layer, unsigned int& seed) {
-    initialize_tensor_normal(layer.weight(), 0.02f, seed);
-    layer.bias().fill(0.0f);
-}
-
-void init_butterfly(ButterflyLinear& layer, unsigned int& seed) {
-    for (int s = 0; s < layer.num_stages(); ++s) {
-        initialize_tensor_normal(layer.stage_weight(s), 0.02f, seed);
+    if (options.epochs <= 0 || options.batch_size <= 0 || options.learning_rate <= 0.0f ||
+        options.seed == 0) {
+        throw std::invalid_argument("epochs, batch, lr and seed must be positive");
     }
+    return options;
 }
 
-float accuracy(const Tensor& logits, const Tensor& labels01) {
+/** Copy the rows listed in order[start, start + count) into a new batch. */
+MnistDataset make_batch(const MnistDataset& data, const std::vector<int>& order, int start, int count) {
+    const int width = data.images.shape()[1];
+    MnistDataset batch{Tensor({count, width}), Tensor({count, 1})};
+    for (int r = 0; r < count; ++r) {
+        const int source_row = order[static_cast<std::size_t>(start + r)];
+        std::copy_n(data.images.data() + source_row * width, width, batch.images.data() + r * width);
+        batch.labels.data()[r] = data.labels.data()[source_row];
+    }
+    return batch;
+}
+
+/** @return How many rows of @p logits have their highest score at the correct label. */
+int count_correct(const Tensor& logits, const Tensor& labels) {
     int correct = 0;
-    const int bsz = logits.shape()[0];
-    for (int b = 0; b < bsz; ++b) {
-        int argmax = 0;
-        float best = logits({b, 0});
-        for (int c = 1; c < logits.shape()[1]; ++c) {
-            if (logits({b, c}) > best) {
-                best = logits({b, c});
-                argmax = c;
-            }
-        }
-        const int y = static_cast<int>(labels01({b, 0}));
-        if (argmax == y) {
+    const int num_classes = logits.shape()[1];
+    for (int b = 0; b < logits.shape()[0]; ++b) {
+        const float* row = logits.data() + b * num_classes;
+        const int predicted = static_cast<int>(std::max_element(row, row + num_classes) - row);
+        if (predicted == static_cast<int>(labels.data()[b])) {
             ++correct;
         }
     }
-    return static_cast<float>(correct) / static_cast<float>(bsz);
+    return correct;
+}
+
+/** One pass over the shuffled training set. @return Mean training loss. */
+double train_epoch(Mlp& model, Adam& optimizer, const MnistDataset& train, std::mt19937& rng,
+                   int batch_size) {
+    std::vector<int> order(static_cast<std::size_t>(train.images.shape()[0]));
+    std::iota(order.begin(), order.end(), 0);
+    std::shuffle(order.begin(), order.end(), rng);
+
+    double loss_sum = 0.0;
+    int num_batches = 0;
+    for (int start = 0; start < static_cast<int>(order.size()); start += batch_size) {
+        const int count = std::min(batch_size, static_cast<int>(order.size()) - start);
+        const MnistDataset batch = make_batch(train, order, start, count);
+        const Tensor logits = model.forward(batch.images);
+        loss_sum += cross_entropy_mean_rows(logits, batch.labels);
+        model.backward(cross_entropy_grad_logits_rows(logits, batch.labels));
+        model.apply_gradients(optimizer);
+        ++num_batches;
+    }
+    return loss_sum / num_batches;
+}
+
+struct Evaluation {
+    double loss;
+    double accuracy;
+};
+
+/** Mean loss and accuracy on @p data, in batches of kEvalBatch, without updating weights. */
+Evaluation evaluate(Mlp& model, const MnistDataset& data) {
+    const int total = data.images.shape()[0];
+    std::vector<int> order(static_cast<std::size_t>(total));
+    std::iota(order.begin(), order.end(), 0);
+
+    double loss_sum = 0.0;
+    int correct = 0;
+    for (int start = 0; start < total; start += kEvalBatch) {
+        const int count = std::min(kEvalBatch, total - start);
+        const MnistDataset batch = make_batch(data, order, start, count);
+        const Tensor logits = model.forward(batch.images);
+        loss_sum += cross_entropy_mean_rows(logits, batch.labels) * count;
+        correct += count_correct(logits, batch.labels);
+    }
+    return Evaluation{loss_sum / total, static_cast<double>(correct) / total};
+}
+
+/** Load the data, train for the requested epochs, print and optionally log each epoch. */
+int run(const Options& options) {
+    const MnistDataset train = load_mnist(options.data_dir, MnistSplit::Train);
+    const MnistDataset test = load_mnist(options.data_dir, MnistSplit::Test);
+
+    Mlp model(kInputDim, kHiddenDim, kNumClasses, options.variant);
+    model.initialize(options.seed);
+    Adam optimizer(options.learning_rate);
+    std::mt19937 rng(options.seed);
+
+    std::cout << "variant=" << variant_name(options.variant) << " seed=" << options.seed
+              << " hidden_params=" << model.hidden_parameter_count()
+              << " total_params=" << model.parameter_count() << "\n";
+
+    std::ofstream log;
+    if (!options.log_path.empty()) {
+        log.open(options.log_path);
+        if (!log) {
+            throw std::runtime_error("could not open log file " + options.log_path);
+        }
+        log << "variant,seed,epoch,train_loss,test_loss,test_accuracy,epoch_seconds,hidden_params\n";
+    }
+
+    std::cout << std::fixed << std::setprecision(4);
+    for (int epoch = 1; epoch <= options.epochs; ++epoch) {
+        const auto started = std::chrono::steady_clock::now();
+        const double train_loss = train_epoch(model, optimizer, train, rng, options.batch_size);
+        const double seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        const Evaluation result = evaluate(model, test);
+
+        std::cout << "epoch=" << epoch << " train_loss=" << train_loss << " test_loss=" << result.loss
+                  << " test_accuracy=" << result.accuracy << " epoch_seconds=" << seconds << "\n";
+        if (log) {
+            log << variant_name(options.variant) << ',' << options.seed << ',' << epoch << ','
+                << train_loss << ',' << result.loss << ',' << result.accuracy << ',' << seconds << ','
+                << model.hidden_parameter_count() << '\n';
+        }
+    }
+    return 0;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    const Args args = parse_args(argc, argv);
-
-    const MnistDataset data = load_mnist_train(args.data_dir);
-    const int n = data.images.shape()[0];
-
-    constexpr int in_dim = 784;
-    constexpr int hid = 512;  // power of two for ButterflyLinear
-    constexpr int out_dim = 10;
-
-    DenseLinear l1(in_dim, hid);
-    DenseLinear l2(hid, out_dim);
-    ButterflyLinear bf(hid);
-
-    unsigned int seed = 123u;
-    init_dense(l1, seed);
-    init_dense(l2, seed);
-    init_butterfly(bf, seed);
-
-    Adam opt(args.lr);
-
-    std::mt19937 rng(7);
-    std::vector<int> idx(static_cast<std::size_t>(n));
-    for (int i = 0; i < n; ++i) {
-        idx[static_cast<std::size_t>(i)] = i;
+    try {
+        return run(parse_options(argc, argv));
+    } catch (const std::exception& error) {
+        std::cerr << "train_mnist: " << error.what() << "\n";
+        return 1;
     }
-
-    for (int e = 0; e < args.epochs; ++e) {
-        std::shuffle(idx.begin(), idx.end(), rng);
-        double loss_acc = 0.0;
-        int steps = 0;
-
-        for (int start = 0; start < n; start += args.batch) {
-            const int bsz = std::min(args.batch, n - start);
-            Tensor xb({bsz, data.images.shape()[1]});
-            Tensor yb({bsz, 1});
-            for (int r = 0; r < bsz; ++r) {
-                const int row = idx[static_cast<std::size_t>(start + r)];
-                for (int c = 0; c < data.images.shape()[1]; ++c) {
-                    xb({r, c}) = data.images({row, c});
-                }
-                yb({r, 0}) = data.labels({row, 0});
-            }
-
-            const Tensor h1_pre = l1.forward(xb);
-            const Tensor h1 = relu(h1_pre);
-
-            const Tensor h2 = args.use_butterfly ? bf.forward(h1) : h1;
-
-            const Tensor logits = l2.forward(h2);
-            const float loss = cross_entropy_mean_rows(logits, yb);
-            loss_acc += static_cast<double>(loss);
-            ++steps;
-
-            const Tensor glog = cross_entropy_grad_logits_rows(logits, yb);
-            const auto g2 = l2.backward(h2, glog);
-            Tensor grad_h2 = g2.grad_input;
-
-            Tensor grad_h1 = grad_h2;
-            if (args.use_butterfly) {
-                const auto gb = bf.backward(grad_h2);
-                grad_h1 = gb.grad_input;
-                for (int s = 0; s < bf.num_stages(); ++s) {
-                    opt.step(bf.stage_weight(s), gb.grad_stages[static_cast<std::size_t>(s)]);
-                }
-            }
-
-            const Tensor grad_h1_pre = relu_backward(h1_pre, grad_h1);
-            const auto g1 = l1.backward(xb, grad_h1_pre);
-
-            opt.step(l1.weight(), g1.grad_weight);
-            opt.step(l1.bias(), g1.grad_bias);
-            opt.step(l2.weight(), g2.grad_weight);
-            opt.step(l2.bias(), g2.grad_bias);
-        }
-
-        std::cout << "epoch=" << e + 1 << " mean_loss=" << (loss_acc / std::max(1, steps)) << "\n";
-    }
-
-    // quick train accuracy on a few batches (same as training order isn't important here)
-    {
-        int checks = std::min(n, 5 * args.batch);
-        float acc_sum = 0.0f;
-        int acc_steps = 0;
-        for (int start = 0; start < checks; start += args.batch) {
-            const int bsz = std::min(args.batch, checks - start);
-            Tensor xb = rows_slice(data.images, start, bsz);
-            Tensor yb = rows_slice(data.labels, start, bsz);
-            const Tensor h1_pre = l1.forward(xb);
-            const Tensor h1 = relu(h1_pre);
-            const Tensor h2 = args.use_butterfly ? bf.forward(h1) : h1;
-            const Tensor logits = l2.forward(h2);
-            acc_sum += accuracy(logits, yb);
-            ++acc_steps;
-        }
-        std::cout << "approx_train_acc(first " << checks << " examples, mean over "
-                  << acc_steps << " batches)=" << (acc_sum / static_cast<float>(acc_steps)) << "\n";
-    }
-
-    std::cout << "variant=" << (args.use_butterfly ? "butterfly_hidden" : "dense_hidden") << "\n";
-    return 0;
 }

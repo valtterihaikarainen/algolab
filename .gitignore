@@ -18,6 +18,9 @@ coverage.info
 coverage_html/
 _htmlcov/
 
+# Datasets (fetched with scripts/download_mnist.sh)
+data/
+
 # Editor / OS
 .cache/
 *.swp

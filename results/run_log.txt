@@ -1,0 +1,54 @@
+variant=none seed=1 hidden_params=0 total_params=407050
+epoch=1 train_loss=0.2359 test_loss=0.1084 test_accuracy=0.9663 epoch_seconds=9.6452
+epoch=2 train_loss=0.0902 test_loss=0.0781 test_accuracy=0.9758 epoch_seconds=9.6502
+epoch=3 train_loss=0.0571 test_loss=0.0736 test_accuracy=0.9765 epoch_seconds=9.6909
+epoch=4 train_loss=0.0403 test_loss=0.0621 test_accuracy=0.9794 epoch_seconds=9.6030
+epoch=5 train_loss=0.0295 test_loss=0.0655 test_accuracy=0.9803 epoch_seconds=9.5904
+variant=dense seed=1 hidden_params=262656 total_params=669706
+epoch=1 train_loss=0.1971 test_loss=0.0918 test_accuracy=0.9715 epoch_seconds=16.0547
+epoch=2 train_loss=0.0780 test_loss=0.0877 test_accuracy=0.9725 epoch_seconds=16.1860
+epoch=3 train_loss=0.0499 test_loss=0.0780 test_accuracy=0.9770 epoch_seconds=16.0967
+epoch=4 train_loss=0.0382 test_loss=0.0837 test_accuracy=0.9763 epoch_seconds=16.0666
+epoch=5 train_loss=0.0301 test_loss=0.0767 test_accuracy=0.9790 epoch_seconds=16.0177
+variant=butterfly seed=1 hidden_params=9728 total_params=416778
+epoch=1 train_loss=0.2533 test_loss=0.1076 test_accuracy=0.9679 epoch_seconds=11.7023
+epoch=2 train_loss=0.0965 test_loss=0.0950 test_accuracy=0.9699 epoch_seconds=11.7617
+epoch=3 train_loss=0.0638 test_loss=0.0821 test_accuracy=0.9752 epoch_seconds=11.8327
+epoch=4 train_loss=0.0454 test_loss=0.0960 test_accuracy=0.9721 epoch_seconds=11.8525
+epoch=5 train_loss=0.0352 test_loss=0.0861 test_accuracy=0.9763 epoch_seconds=11.7831
+variant=none seed=2 hidden_params=0 total_params=407050
+epoch=1 train_loss=0.2373 test_loss=0.1222 test_accuracy=0.9618 epoch_seconds=9.9374
+epoch=2 train_loss=0.0923 test_loss=0.0770 test_accuracy=0.9760 epoch_seconds=9.7328
+epoch=3 train_loss=0.0578 test_loss=0.0718 test_accuracy=0.9755 epoch_seconds=9.7438
+epoch=4 train_loss=0.0407 test_loss=0.0658 test_accuracy=0.9791 epoch_seconds=9.7094
+epoch=5 train_loss=0.0298 test_loss=0.0811 test_accuracy=0.9728 epoch_seconds=9.7249
+variant=dense seed=2 hidden_params=262656 total_params=669706
+epoch=1 train_loss=0.1958 test_loss=0.1040 test_accuracy=0.9659 epoch_seconds=16.2699
+epoch=2 train_loss=0.0787 test_loss=0.0694 test_accuracy=0.9773 epoch_seconds=16.1047
+epoch=3 train_loss=0.0500 test_loss=0.0980 test_accuracy=0.9699 epoch_seconds=16.1505
+epoch=4 train_loss=0.0371 test_loss=0.0740 test_accuracy=0.9786 epoch_seconds=16.0852
+epoch=5 train_loss=0.0313 test_loss=0.0766 test_accuracy=0.9800 epoch_seconds=15.9446
+variant=butterfly seed=2 hidden_params=9728 total_params=416778
+epoch=1 train_loss=0.2449 test_loss=0.1333 test_accuracy=0.9571 epoch_seconds=11.9492
+epoch=2 train_loss=0.0952 test_loss=0.0826 test_accuracy=0.9743 epoch_seconds=11.8400
+epoch=3 train_loss=0.0612 test_loss=0.0936 test_accuracy=0.9704 epoch_seconds=11.7293
+epoch=4 train_loss=0.0470 test_loss=0.0858 test_accuracy=0.9743 epoch_seconds=11.7523
+epoch=5 train_loss=0.0359 test_loss=0.1074 test_accuracy=0.9702 epoch_seconds=11.7609
+variant=none seed=3 hidden_params=0 total_params=407050
+epoch=1 train_loss=0.2367 test_loss=0.1133 test_accuracy=0.9654 epoch_seconds=9.7823
+epoch=2 train_loss=0.0920 test_loss=0.0915 test_accuracy=0.9714 epoch_seconds=9.7597
+epoch=3 train_loss=0.0602 test_loss=0.0699 test_accuracy=0.9786 epoch_seconds=9.7715
+epoch=4 train_loss=0.0411 test_loss=0.0676 test_accuracy=0.9796 epoch_seconds=9.6420
+epoch=5 train_loss=0.0311 test_loss=0.0649 test_accuracy=0.9789 epoch_seconds=9.6268
+variant=dense seed=3 hidden_params=262656 total_params=669706
+epoch=1 train_loss=0.1940 test_loss=0.0862 test_accuracy=0.9733 epoch_seconds=16.0282
+epoch=2 train_loss=0.0765 test_loss=0.0993 test_accuracy=0.9688 epoch_seconds=15.9482
+epoch=3 train_loss=0.0520 test_loss=0.0876 test_accuracy=0.9718 epoch_seconds=15.8739
+epoch=4 train_loss=0.0387 test_loss=0.0743 test_accuracy=0.9776 epoch_seconds=15.8557
+epoch=5 train_loss=0.0307 test_loss=0.0909 test_accuracy=0.9755 epoch_seconds=15.9175
+variant=butterfly seed=3 hidden_params=9728 total_params=416778
+epoch=1 train_loss=0.2551 test_loss=0.1126 test_accuracy=0.9651 epoch_seconds=11.6555
+epoch=2 train_loss=0.0954 test_loss=0.1006 test_accuracy=0.9680 epoch_seconds=11.7126
+epoch=3 train_loss=0.0646 test_loss=0.0827 test_accuracy=0.9750 epoch_seconds=11.7025
+epoch=4 train_loss=0.0475 test_loss=0.0860 test_accuracy=0.9756 epoch_seconds=11.7593
+epoch=5 train_loss=0.0358 test_loss=0.0801 test_accuracy=0.9773 epoch_seconds=11.7687

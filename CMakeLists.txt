@@ -17,20 +17,14 @@ endif()
 
 add_library(vadugrad
   src/tensor.cpp
-  src/tensor_ops.cpp
   src/nn_ops.cpp
   src/mnist.cpp
   src/dense_linear.cpp
   src/butterfly_linear.cpp
-  src/multihead_attention.cpp
-  src/layer_norm.cpp
   src/activations.cpp
-  src/feed_forward.cpp
-  src/embedding.cpp
   src/parameter_init.cpp
-  src/transformer_block.cpp
-  src/decoder_only_transformer.cpp
   src/adam.cpp
+  src/mlp.cpp
 )
 target_include_directories(vadugrad PUBLIC include)
 
@@ -38,13 +32,6 @@ if(ENABLE_COVERAGE)
   target_compile_options(vadugrad PRIVATE --coverage)
   target_link_options(vadugrad PUBLIC --coverage)
 endif()
-
-add_executable(vadugrad_cli src/main.cpp)
-target_link_libraries(vadugrad_cli PRIVATE vadugrad)
-set_target_properties(vadugrad_cli PROPERTIES OUTPUT_NAME vadugrad)
-
-add_executable(train_lm apps/train_lm.cpp)
-target_link_libraries(train_lm PRIVATE vadugrad)
 
 add_executable(train_mnist apps/train_mnist.cpp)
 target_link_libraries(train_mnist PRIVATE vadugrad)
@@ -64,11 +51,9 @@ if(BUILD_TESTING)
     tests/test_tensor.cpp
     tests/test_dense_linear.cpp
     tests/test_butterfly_linear.cpp
-    tests/test_multihead_attention.cpp
     tests/test_nn_ops.cpp
-    tests/test_layer_norm.cpp
-    tests/test_decoder_only_transformer.cpp
-    tests/test_tiny_overfit.cpp
+    tests/test_adam.cpp
+    tests/test_mlp.cpp
     tests/test_mnist_loader.cpp
   )
   target_link_libraries(tests PRIVATE vadugrad GTest::gtest_main)

@@ -1,155 +1,66 @@
-# vadugrad — from-scratch C++ neural nets and transformer blocks
+# Butterfly vs dense layers on MNIST, from scratch in C++
 
-This repository contains from-scratch C++ implementations of tensor ops, manual backprop modules, and a decoder-only transformer training demo. The [specification](docs/specification-doc.md) describes original scope, complexity, and sources.
+This project asks whether a **butterfly-structured linear layer** can replace a
+**dense linear layer** in a small neural network without a meaningful loss in accuracy,
+while using far fewer parameters and arithmetic operations. Everything — tensors,
+forward and backward passes, and the optimizer — is implemented from scratch in C++17,
+without machine-learning libraries or automatic differentiation.
 
-## For peer reviewers
+## What is a butterfly layer?
 
-Use this section as a single entry point; the rest of the README and linked docs fill in detail.
+A dense layer multiplies its input by a full *n × n* weight matrix, so it costs *n²*
+weights and *n²* operations. The Fast Fourier Transform shows that some *n × n* matrices
+can be applied in *O(n log n)* time by splitting the work into log₂ *n* stages that each
+mix only **pairs** of positions. A butterfly layer keeps this FFT wiring but makes the
+2×2 mixing operations learnable:
 
-### What to run (in order)
+| Width *n* | Dense weights (*n²*) | Butterfly weights (2*n* log₂ *n*) |
+|-----------|----------------------|-----------------------------------|
+| 64        | 4,096                | 768                               |
+| 512       | 262,144              | 9,216                             |
+| 4,096     | 16,777,216           | 98,304                            |
 
-1. **Configure and build** (first configure needs network for GoogleTest via CMake `FetchContent`):
+The catch is that a butterfly layer can only express structured matrices. Whether that is
+enough for a real task is what this project measures. The
+[specification](docs/specification-doc.md) explains the background in more detail.
 
-   ```bash
-   cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-   cmake --build build
-   ```
+## Experiment and results
 
-2. **Run the full test suite** (no MNIST download required; the MNIST loader is covered with a tiny synthetic IDX fixture in `tests/test_mnist_loader.cpp`):
+Three networks (784 → 512 → ReLU → *hidden* → ReLU → 10) are trained on MNIST with
+identical settings and differ only in the hidden 512 → 512 layer: `none` (skipped),
+`dense`, or `butterfly`. Test accuracy on the 10,000 MNIST test images after 5 epochs,
+mean ± standard deviation over 3 seeds, on Linux (GCC) and macOS (Clang):
 
-   ```bash
-   cd build && ctest --output-on-failure
-   ```
+| Variant     | Hidden-layer parameters | Test accuracy, Linux | Test accuracy, macOS | Seconds per epoch, Linux / macOS |
+|-------------|-------------------------|----------------------|----------------------|----------------------------------|
+| `none`      | 0                       | 97.73 % ± 0.40       | 97.99 % ± 0.12       | 9.7 / 7.5                        |
+| `dense`     | 262,656                 | 97.82 % ± 0.24       | 97.91 % ± 0.03       | 16.0 / 12.5                      |
+| `butterfly` | 9,728                   | 97.46 % ± 0.38       | 97.74 % ± 0.22       | 11.8 / 11.9                      |
 
-   Equivalent: `./build/tests` from the repo root after a successful build.
+The butterfly layer comes within 0.4 percentage points of the dense layer with 27× fewer
+parameters. The `none` baseline is just as accurate, though, so MNIST is too easy to show
+whether the extra hidden layer is needed at all. The butterfly's 28× fewer operations also
+translate into only a small speedup, because its memory access pattern is much less
+efficient than the dense `matmul`. The
+[implementation document](docs/implementation.md#3-results) discusses both.
 
-3. **Optional demos** (manual inspection, not required for CI-style verification):
-
-   | Command | Purpose |
-   |---------|---------|
-   | `./build/vadugrad` | Small dense `DenseLinear` forward/backward sanity demo |
-   | `./build/vadugrad butterfly` | `ButterflyLinear`: dense-matrix equivalence check + sample backward stats |
-   | `./build/train_lm` | Tiny synthetic next-token training (decoder-only stack) |
-   | `./build/train_mnist --help` | MNIST MLP trainer CLI (`--dense` vs `--butterfly` hidden; see below) |
-
-### MNIST files (only if you run `train_mnist`)
-
-Place the official **training** IDX files in a directory (e.g. `data/mnist/`) and pass `--data` to that directory. Expected **exact** filenames:
-
-- `train-images-idx3-ubyte`
-- `train-labels-idx1-ubyte`
-
-These are the standard files from the [MNIST dataset page](http://yann.lecun.com/exdb/mnist/) (or mirrors). If they are missing, `train_mnist` fails at load time with a clear open/read error.
-
-Example:
-
-```bash
-./build/train_mnist --data data/mnist --epochs 1 --batch 64 --lr 1e-3
-./build/train_mnist --data data/mnist --dense    # skip butterfly in the hidden block
-./build/train_mnist --data data/mnist --butterfly # default; explicit for reviewers
-```
-
-### Where to look in the code (high signal)
-
-| Topic | Primary locations |
-|-------|-------------------|
-| Butterfly layer | `include/vadugrad/butterfly_linear.hpp`, `src/butterfly_linear.cpp`, `tests/test_butterfly_linear.cpp`, CLI in `src/main.cpp` (`butterfly` subcommand) |
-| MNIST loading | `include/vadugrad/data/mnist.hpp`, `src/mnist.cpp`, `tests/test_mnist_loader.cpp` |
-| MNIST MLP training app | `apps/train_mnist.cpp` |
-| Row softmax / CE for batched logits | `include/vadugrad/nn/nn_ops.hpp`, `src/nn_ops.cpp`, `tests/test_nn_ops.cpp` |
-
-### Documentation map (course / review)
-
-| Document | Role |
-|----------|------|
-| [docs/specification-doc.md](docs/specification-doc.md) | Scope, complexity, sources |
-| [docs/implementation.md](docs/implementation.md) | Module layout, complexity notes, limitations |
-| [docs/testing.md](docs/testing.md) | What each test area covers, coverage commands |
-| [docs/user-guide.md](docs/user-guide.md) | Requirements, all executables, flags |
-| [weekly-reports/](weekly-reports/) | Weekly progress notes |
-
-Course pointers: [Documentation](https://algolabra-hy.github.io/documentation-en), [Unit testing — coverage](https://algolabra-hy.github.io/unittest-en#has-enough-testing-been-done-test-coverage).
-
-## Build
+## Quick start
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+./build/tests                                   # unit and integration tests
+scripts/download_mnist.sh                       # fetches MNIST into data/mnist
+./build/train_mnist --variant butterfly --epochs 3
 ```
 
-The first configure downloads [GoogleTest](https://github.com/google/googletest) via CMake `FetchContent` (network required).
+See the [user guide](docs/user-guide.md) for all options.
 
-## Run tests
+## Documentation
 
-```bash
-cd build && ctest --output-on-failure
-```
-
-Or run the test binary directly: `./build/tests`.
-
-## Run the CLI demo
-
-After building, the executable is `./build/vadugrad` (target name `vadugrad_cli`).
-
-- Default: a small dense-layer forward pass and one backward step.
-- Butterfly demo: `./build/vadugrad butterfly`
-
-Use `./build/vadugrad --help` for options.
-
-## Run the tiny transformer training demo
-
-After building, run:
-
-```bash
-./build/train_lm
-```
-
-This runs a tiny synthetic next-token training loop and prints loss values.
-
-## Run MNIST training (MLP)
-
-After building, see **For peer reviewers** above for required filenames and `--data`. Quick start:
-
-```bash
-./build/train_mnist --help
-./build/train_mnist --data data/mnist --epochs 1 --batch 64 --lr 1e-3
-```
-
-## Test coverage (gcov / lcov)
-
-The course expects unit tests with **coverage tracked** (see [Unit testing — coverage](https://algolabra-hy.github.io/unittest-en#has-enough-testing-been-done-test-coverage)). For this C++ project, configure with coverage flags, run tests, then inspect `.gcno`/`.gcda` with `gcov` or generate an HTML report with `lcov`/`genhtml`:
-
-```bash
-cmake -S . -B build-coverage -DENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-coverage
-cd build-coverage && ctest --output-on-failure
-gcov -b -s ../src \
-  CMakeFiles/vadugrad.dir/src/tensor.cpp.gcno \
-  CMakeFiles/vadugrad.dir/src/dense_linear.cpp.gcno \
-  CMakeFiles/vadugrad.dir/src/butterfly_linear.cpp.gcno \
-  CMakeFiles/vadugrad.dir/src/mnist.cpp.gcno
-```
-
-With `lcov` installed:
-
-```bash
-lcov --capture --directory . --output-file coverage.info --ignore-errors inconsistent,inconsistent
-lcov --remove coverage.info '/usr/*' '*/_deps/*' --output-file coverage.info --ignore-errors inconsistent,inconsistent
-genhtml coverage.info --output-directory coverage_html
-```
-
-Open `coverage_html/index.html` in a browser.
-
-## Documentation in the repository
-
-Peer reviewers: the table in **For peer reviewers** lists the same paths with short roles. Quick links:
-
-| Document | Path |
-|----------|------|
-| Specification | [docs/specification-doc.md](docs/specification-doc.md) |
-| Implementation | [docs/implementation.md](docs/implementation.md) |
-| Testing | [docs/testing.md](docs/testing.md) |
-| User guide | [docs/user-guide.md](docs/user-guide.md) |
-| Weekly reports | [week 1](weekly-reports/week1.md), [week 2](weekly-reports/week2.md), [week 3](weekly-reports/week3.md), [week 4](weekly-reports/week4.md), [week 5](weekly-reports/week5.md), [week 6](weekly-reports/week6.md) |
-
-Course documentation requirements: [Documentation](https://algolabra-hy.github.io/documentation-en), [Suggested schedule](https://algolabra-hy.github.io/schedule-en).
+- [Specification](docs/specification-doc.md): goal, background, planned algorithms and complexity
+- [Implementation](docs/implementation.md): program structure, measured results, limitations
+- [Testing](docs/testing.md): what is tested, why, coverage
+- [User guide](docs/user-guide.md): building, running and inputs
+- Weekly reports: [1](weekly-reports/week1.md), [2](weekly-reports/week2.md),
+  [3](weekly-reports/week3.md), [4](weekly-reports/week4.md),
+  [5](weekly-reports/week5.md), [6](weekly-reports/week6.md), [7](weekly-reports/final-submission.md)

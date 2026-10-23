@@ -10,7 +10,6 @@
 - Ajoin lopullisen buildin ja testit: kaikki 37 GoogleTest-testiä menivät läpi.
 - Ajoin coverage-buildin ja keräsin `gcov`-tulokset omille `src/*.cpp`-tiedostoille. Lähdekoodin rivikattavuus oli 1175 / 1380 eli 85.14%.
 - Päivitin testausdokumenttiin tuoreet testitulokset, kattavuusluvut ja tiedon siitä, että `lcov` ei ollut tässä ympäristössä asennettuna.
-- Päivitin toteutusdokumentin lopulliseen muotoon: ohjelman rakenne, aikavaativuudet, rajoitteet, parannusideat, käytetyt lähteet sekä toteutusdokumentin kohta 5 (kevään toteutus, tämän syksyn git-siivous Cursorilla, kielimallien käyttö API-iterointiin, boilerplateen, koodikatselmointiin ja dokumentointiin).
 - Päivitin käyttöohjeen niin, että build-, testi-, demo- ja MNIST-ajot löytyvät samasta paikasta.
 - Korjasin vertaispalautteen perusteella epäselviä vakioita nimeämällä ja kommentoimalla GELU-approksimaation ja satunnaisalustuksen vakioita.
 

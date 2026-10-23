@@ -1,6 +1,7 @@
 /**
  * @file tensor.cpp
- * @brief Implementation of @ref Tensor and @ref compute_strides.
+ * @brief Implementation of @ref Tensor and the matrix helpers. The public API is documented
+ *        in tensor.hpp.
  */
 
 #include <vadugrad/tensor.hpp>
@@ -13,6 +14,9 @@ std::vector<int> compute_strides(const std::vector<int>& shape) {
         throw std::invalid_argument("shape cant be empty");
     }
 
+    // A stride is how many floats to skip to move one step along a dimension. In row-major
+    // order the last dimension is contiguous (stride 1), and each earlier stride is the next
+    // one times the next dimension's size: shape [2, 3, 4] gives strides [12, 4, 1].
     int ndim = static_cast<int>(shape.size());
     std::vector<int> strides(ndim);
     strides[ndim - 1] = 1;
@@ -22,11 +26,6 @@ std::vector<int> compute_strides(const std::vector<int>& shape) {
     }
     return strides;
 }
-
-
-/** 
-* Public API including the member functions of the Tensor class
-*/
 
 
 Tensor::Tensor(const std::vector<int>& shape) {
@@ -51,6 +50,9 @@ Tensor::~Tensor() {
     delete[] strides_;
 }
 
+// The tensor owns three raw arrays, so copying must allocate new ones (a deep copy). Moving
+// instead hands the arrays over and leaves the source empty, which avoids copying large
+// batches when tensors are returned from functions.
 Tensor::Tensor(const Tensor& other) {
     ndim_ = other.ndim_;
     numel_ = other.numel_;
@@ -169,14 +171,6 @@ const float& Tensor::at(const std::vector<int>& idx) const {
     return data_[offset(idx)];
 }
 
-float& Tensor::operator()(std::initializer_list<int> idx) {
-    return at(std::vector<int>(idx));
-}
-
-const float& Tensor::operator()(std::initializer_list<int> idx) const {
-    return at(std::vector<int>(idx));
-}
-
 void Tensor::fill(float v) {
     for (int i = 0; i < numel_; ++i) {
         data_[i] = v;
@@ -210,47 +204,6 @@ void Tensor::reshape(const std::vector<int>& new_shape) {
     ndim_ = new_ndim;
 }
 
-template <typename Op>
-Tensor elementwise_binary(const Tensor& a, const Tensor& b, Op op) {
-    if (a.shape() != b.shape()) throw std::invalid_argument("tensor shapes must match");
-
-    Tensor out(a.shape());
-    const int n = a.numel();
-    const float* ad = a.data();
-    const float* bd = b.data();
-    float* od = out.data();
-    for (int i = 0; i < n; ++i) od[i] = op(ad[i], bd[i]);
-
-    return out;
-}
-
-Tensor add(const Tensor& a, const Tensor& b) { return elementwise_binary(a, b, [](float x, float y){ return x + y; }); }
-Tensor sub(const Tensor& a, const Tensor& b) { return elementwise_binary(a, b, [](float x, float y){ return x - y; }); }
-Tensor mul(const Tensor& a, const Tensor& b) { return elementwise_binary(a, b, [](float x, float y){ return x * y; }); }
-Tensor div(const Tensor& a, const Tensor& b) { return elementwise_binary(a, b, [](float x, float y){ return x / y; }); }
-
-template <typename Op>
-Tensor elementwise_scalar(const Tensor& a, float s, Op op) {
-
-    Tensor out(a.shape());
-    const int n = a.numel();
-    const float* ad = a.data();
-    float* od = out.data();
-    for (int i = 0; i < n; ++i) od[i] = op(ad[i], s);
-
-    return out;
-}
-
-Tensor add(const Tensor& a, float s) { return elementwise_scalar(a, s, [](float x, float y){ return x + y; }); }
-Tensor sub(const Tensor& a, float s) { return elementwise_scalar(a, s, [](float x, float y){ return x - y; }); }
-Tensor mul(const Tensor& a, float s) { return elementwise_scalar(a, s, [](float x, float y){ return x * y; }); }
-Tensor div(const Tensor& a, float s) { return elementwise_scalar(a, s, [](float x, float y){ return x / y; }); }
-
-Tensor operator+(const Tensor& a, const Tensor& b) { return add(a, b); }
-Tensor operator-(const Tensor& a, const Tensor& b) { return sub(a, b); }
-Tensor operator*(const Tensor& a, float s) { return mul(a, s); }
-Tensor operator*(float s, const Tensor& a) { return mul(a, s); }
-
 Tensor transpose2d(const Tensor& x) {
 
     // Validating the rank
@@ -266,7 +219,7 @@ Tensor transpose2d(const Tensor& x) {
 
     for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < columns; ++j) {
-            output({j, i}) = x({i, j});
+            output(j, i) = x(i, j);
         }
     }
     return output;
@@ -291,14 +244,20 @@ Tensor matmul(const Tensor& a, const Tensor& b) {
     }
 
     Tensor output({m, n});
+    const float* a_data = a.data();
+    const float* b_data = b.data();
+    float* out_data = output.data();
 
+    // i-p-j loop order walks both b and output row by row, so the inner loop reads
+    // contiguous memory and the compiler can vectorize it.
     for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < n; ++j) {
-            float acc = 0.0f;
-            for (int p = 0; p < k; ++p) {
-                acc += a({i, p}) * b({p, j});
+        float* out_row = out_data + i * n;
+        for (int p = 0; p < k; ++p) {
+            const float a_ip = a_data[i * k + p];
+            const float* b_row = b_data + p * n;
+            for (int j = 0; j < n; ++j) {
+                out_row[j] += a_ip * b_row[j];
             }
-            output({i, j}) = acc; 
         }
     }
     return output;
@@ -332,7 +291,12 @@ Tensor sum(const Tensor& x, int axis, bool keepdim) {
 
     Tensor out(out_shape);
 
-    int outer = 1; 
+    // View the row-major data as a 3D block [outer, reduce, inner]: outer is the product of
+    // the dimensions before the axis, reduce the axis itself, inner the product of those after
+    // it. Element (o, r, i) then sits at flat index (o * reduce + r) * inner + i, and summing
+    // over r gives output element (o, i). For a [B, n] tensor and axis 0 this is the column
+    // sum used for bias gradients (outer = 1, reduce = B, inner = n).
+    int outer = 1;
     for (int d = 0; d < axis; ++d) outer *= shape[d];
 
     const int reduce = shape[axis];
@@ -351,24 +315,9 @@ Tensor sum(const Tensor& x, int axis, bool keepdim) {
                 acc += xd[in_flat];
             }
             int out_flat = o * inner + i;
-            od[out_flat]= acc;
+            od[out_flat] = acc;
         }
     }
 
     return out;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

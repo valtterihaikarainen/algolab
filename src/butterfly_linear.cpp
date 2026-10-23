@@ -6,33 +6,34 @@
 #include <vadugrad/butterfly_linear.hpp>
 
 #include <stdexcept>
+#include <string>
 
 namespace {
 
 bool is_power_of_two(int x) { return x > 0 && (x & (x - 1)) == 0; }
 
 int log2_int(int n) {
-    int l = 0;
-    int v = n;
-    while (v > 1) {
-        v >>= 1;
-        ++l;
+    int log = 0;
+    while (n > 1) {
+        n >>= 1;
+        ++log;
     }
-    return l;
+    return log;
 }
 
-int pair_index_for_stride(int i, int stride) {
-    // Unique index in [0, n/2) for the unordered pair {i, i^stride} when stride is a power of two.
-    if (!is_power_of_two(stride) || stride <= 0) {
-        throw std::invalid_argument("pair_index_for_stride: stride must be a positive power of two");
-    }
-    const int stage = log2_int(stride);
-    const int low = i & (stride - 1);
-    const int high = i >> (stage + 1);
-    return (high << stage) | low;
+/**
+ * Block index of the pair whose lower element is @p i in stage @p stage.
+ *
+ * The lower element has bit @p stage equal to 0. Deleting that bit from @p i numbers the
+ * n/2 pairs of a stage as 0, 1, ..., n/2 - 1 without gaps.
+ */
+int pair_index(int i, int stage) {
+    const int low_bits = i & ((1 << stage) - 1);
+    const int high_bits = i >> (stage + 1);
+    return (high_bits << stage) | low_bits;
 }
 
-void validate_rank2_inner(const Tensor& x, int n, const char* name) {
+void validate_input(const Tensor& x, int n, const char* name) {
     if (x.ndim() != 2) {
         throw std::invalid_argument(std::string(name) + " must be rank-2 [batch, n]");
     }
@@ -43,11 +44,12 @@ void validate_rank2_inner(const Tensor& x, int n, const char* name) {
 
 }  // namespace
 
-ButterflyLinear::ButterflyLinear(int n) : n_(n), num_stages_(log2_int(n)) {
+ButterflyLinear::ButterflyLinear(int n)
+    : n_(n), num_stages_(log2_int(n)), bias_(std::vector<int>{n > 0 ? n : 1}) {
     if (n < 2 || !is_power_of_two(n)) {
         throw std::invalid_argument("ButterflyLinear: n must be a power of two and >= 2");
     }
-    stage_weights_.reserve(num_stages_);
+    stage_weights_.reserve(static_cast<std::size_t>(num_stages_));
     for (int s = 0; s < num_stages_; ++s) {
         stage_weights_.emplace_back(std::vector<int>{n / 2, 2, 2});
     }
@@ -55,131 +57,121 @@ ButterflyLinear::ButterflyLinear(int n) : n_(n), num_stages_(log2_int(n)) {
 
 int ButterflyLinear::dim() const { return n_; }
 int ButterflyLinear::num_stages() const { return num_stages_; }
+int ButterflyLinear::num_parameters() const { return num_stages_ * (n_ / 2) * 4 + n_; }
 
 Tensor& ButterflyLinear::stage_weight(int s) { return stage_weights_.at(static_cast<std::size_t>(s)); }
 const Tensor& ButterflyLinear::stage_weight(int s) const {
     return stage_weights_.at(static_cast<std::size_t>(s));
 }
 
+Tensor& ButterflyLinear::bias() { return bias_; }
+const Tensor& ButterflyLinear::bias() const { return bias_; }
+
 Tensor ButterflyLinear::forward(const Tensor& x) const {
-    validate_rank2_inner(x, n_, "ButterflyLinear::forward x");
-
+    validate_input(x, n_, "ButterflyLinear::forward x");
     const int batch = x.shape()[0];
-    Tensor y(x.shape());
-    for (int b = 0; b < batch; ++b) {
-        for (int i = 0; i < n_; ++i) {
-            y({b, i}) = x({b, i});
-        }
-    }
 
+    // The input of every stage is saved: the gradient of a block's weights depends on the
+    // values that entered that block, so backward needs them all. This costs B·n·log2(n)
+    // floats of memory.
     std::vector<Tensor> stage_inputs;
     stage_inputs.reserve(static_cast<std::size_t>(num_stages_));
 
+    Tensor current = x;
     for (int s = 0; s < num_stages_; ++s) {
-        stage_inputs.push_back(y);
+        // Stage s pairs positions that differ only in bit s: (0,1),(2,3),... for s = 0,
+        // (0,2),(1,3),... for s = 1, and so on. Each pair is processed once, from its lower
+        // element, and mixed by its own 2×2 block k.
+        const Tensor& w = stage_weights_[static_cast<std::size_t>(s)];
         const int stride = 1 << s;
-        Tensor next(y.shape());
+        Tensor next(current.shape());
         for (int b = 0; b < batch; ++b) {
             for (int i = 0; i < n_; ++i) {
-                const int j = i ^ stride;
-                if (j < i) {
-                    continue;
+                if (i & stride) {
+                    continue;  // i is the upper element; its pair was handled at i - stride
                 }
-
-                const int k = pair_index_for_stride(i, stride);
-
-                const float xi = y({b, i});
-                const float xj = y({b, j});
-
-                const float w00 = stage_weights_[static_cast<std::size_t>(s)]({k, 0, 0});
-                const float w01 = stage_weights_[static_cast<std::size_t>(s)]({k, 0, 1});
-                const float w10 = stage_weights_[static_cast<std::size_t>(s)]({k, 1, 0});
-                const float w11 = stage_weights_[static_cast<std::size_t>(s)]({k, 1, 1});
-
-                next({b, i}) = w00 * xi + w01 * xj;
-                next({b, j}) = w10 * xi + w11 * xj;
+                const int j = i + stride;
+                const int k = pair_index(i, s);
+                const float xi = current(b, i);
+                const float xj = current(b, j);
+                next(b, i) = w(k, 0, 0) * xi + w(k, 0, 1) * xj;
+                next(b, j) = w(k, 1, 0) * xi + w(k, 1, 1) * xj;
             }
         }
-        y = next;
+        stage_inputs.push_back(std::move(current));
+        current = std::move(next);
+    }
+
+    // One bias per output position, added after the last stage (y = B x + b).
+    for (int b = 0; b < batch; ++b) {
+        for (int i = 0; i < n_; ++i) {
+            current(b, i) += bias_.data()[i];
+        }
     }
 
     cache_stage_inputs_ = std::move(stage_inputs);
-    return y;
+    return current;
 }
 
 ButterflyLinear::BackwardGradients ButterflyLinear::backward(const Tensor& grad_output) const {
     if (!cache_stage_inputs_) {
         throw std::invalid_argument("ButterflyLinear::backward called before forward");
     }
-    validate_rank2_inner(grad_output, n_, "ButterflyLinear::backward grad_output");
-
-    const int batch = grad_output.shape()[0];
+    validate_input(grad_output, n_, "ButterflyLinear::backward grad_output");
     const auto& stage_inputs = *cache_stage_inputs_;
-    if (static_cast<int>(stage_inputs.size()) != num_stages_) {
-        throw std::invalid_argument("ButterflyLinear::backward: internal cache corrupted");
+    const int batch = grad_output.shape()[0];
+    if (stage_inputs.front().shape()[0] != batch) {
+        throw std::invalid_argument("ButterflyLinear::backward: batch size differs from forward");
     }
+
+    // The bias is added to every row, so its gradient is the upstream gradient summed over
+    // the batch.
+    Tensor grad_bias = sum(grad_output, 0, false);
 
     std::vector<Tensor> grad_stages;
     grad_stages.reserve(stage_weights_.size());
     for (const auto& w : stage_weights_) {
         grad_stages.emplace_back(w.shape());
-        grad_stages.back().fill(0.0f);
     }
 
-    Tensor gy = grad_output;
+    // The last stage produced the output, so it is undone first. `grad` always holds the
+    // gradient with respect to the output of stage s.
+    Tensor grad = grad_output;
     for (int s = num_stages_ - 1; s >= 0; --s) {
-        const Tensor& y_in = stage_inputs[static_cast<std::size_t>(s)];
-        Tensor gx(y_in.shape());
-        gx.fill(0.0f);
-
+        const Tensor& w = stage_weights_[static_cast<std::size_t>(s)];
+        const Tensor& input = stage_inputs[static_cast<std::size_t>(s)];
+        Tensor& grad_w = grad_stages[static_cast<std::size_t>(s)];
         const int stride = 1 << s;
+        Tensor grad_input(input.shape());
         for (int b = 0; b < batch; ++b) {
             for (int i = 0; i < n_; ++i) {
-                const int j = i ^ stride;
-                if (j < i) {
+                if (i & stride) {
                     continue;
                 }
+                const int j = i + stride;
+                const int k = pair_index(i, s);
+                const float xi = input(b, i);
+                const float xj = input(b, j);
+                const float gi = grad(b, i);
+                const float gj = grad(b, j);
 
-                const int k = pair_index_for_stride(i, stride);
+                // The forward pass computed [out_i, out_j] = W [x_i, x_j], so the gradient
+                // flows back through the transpose: [g_xi, g_xj] = W^T [g_i, g_j]. Note w10,
+                // not w01, in the first line.
+                grad_input(b, i) = w(k, 0, 0) * gi + w(k, 1, 0) * gj;
+                grad_input(b, j) = w(k, 0, 1) * gi + w(k, 1, 1) * gj;
 
-                const float xi = y_in({b, i});
-                const float xj = y_in({b, j});
-
-                const float w00 = stage_weights_[static_cast<std::size_t>(s)]({k, 0, 0});
-                const float w01 = stage_weights_[static_cast<std::size_t>(s)]({k, 0, 1});
-                const float w10 = stage_weights_[static_cast<std::size_t>(s)]({k, 1, 0});
-                const float w11 = stage_weights_[static_cast<std::size_t>(s)]({k, 1, 1});
-
-                const float gyi = gy({b, i});
-                const float gyj = gy({b, j});
-
-                gx({b, i}) += w00 * gyi + w10 * gyj;
-                gx({b, j}) += w01 * gyi + w11 * gyj;
-
-                grad_stages[static_cast<std::size_t>(s)]({k, 0, 0}) += gyi * xi;
-                grad_stages[static_cast<std::size_t>(s)]({k, 0, 1}) += gyi * xj;
-                grad_stages[static_cast<std::size_t>(s)]({k, 1, 0}) += gyj * xi;
-                grad_stages[static_cast<std::size_t>(s)]({k, 1, 1}) += gyj * xj;
+                // out_i = w00 x_i + w01 x_j, so dL/dw00 = g_i x_i, dL/dw01 = g_i x_j, and
+                // likewise for out_j. The same block is used by every row of the batch, so
+                // the contributions are summed (+=).
+                grad_w(k, 0, 0) += gi * xi;
+                grad_w(k, 0, 1) += gi * xj;
+                grad_w(k, 1, 0) += gj * xi;
+                grad_w(k, 1, 1) += gj * xj;
             }
         }
-        gy = gx;
+        grad = std::move(grad_input);
     }
 
-    return BackwardGradients{gy, grad_stages};
-}
-
-ButterflyLinear ButterflyLinear::clone_weights() const {
-    ButterflyLinear out(n_);
-    for (int s = 0; s < num_stages_; ++s) {
-        const Tensor& src = stage_weights_[static_cast<std::size_t>(s)];
-        Tensor& dst = out.stage_weight(s);
-        for (int k = 0; k < src.shape()[0]; ++k) {
-            for (int a = 0; a < 2; ++a) {
-                for (int b = 0; b < 2; ++b) {
-                    dst({k, a, b}) = src({k, a, b});
-                }
-            }
-        }
-    }
-    return out;
+    return BackwardGradients{std::move(grad), std::move(grad_stages), std::move(grad_bias)};
 }

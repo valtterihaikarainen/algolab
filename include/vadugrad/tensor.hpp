@@ -106,11 +106,47 @@ public:
     /** @brief Element access by multi-index (const). */
     const float& at(const std::vector<int>& idx) const;
 
-    /** @brief Element access using an initializer list as multi-index, e.g. @c t({0,1,2}). */
-    float& operator()(std::initializer_list<int> idx);
+    /**
+     * @brief Element access using a braced multi-index, e.g. @c t({0,1,2}).
+     * @throws std::invalid_argument if the index count differs from @c ndim().
+     * @throws std::out_of_range if any index is outside its dimension.
+     */
+    float& operator()(std::initializer_list<int> idx) { return data_[braced_offset(idx)]; }
 
-    /** @brief Const element access using an initializer list as multi-index. */
-    const float& operator()(std::initializer_list<int> idx) const;
+    /** @brief Const element access using a braced multi-index. */
+    const float& operator()(std::initializer_list<int> idx) const {
+        return data_[braced_offset(idx)];
+    }
+
+    /**
+     * @brief Bounds-checked element access for rank-2 tensors, e.g. @c t(row, col).
+     *
+     * Faster than the braced form; used in the inner loops of the layers.
+     * @throws std::invalid_argument if @c ndim() != 2.
+     * @throws std::out_of_range if an index is outside its dimension.
+     */
+    float& operator()(int i, int j) {
+        require_rank(2);
+        return data_[axis_offset(0, i) + axis_offset(1, j)];
+    }
+
+    /** @brief Const rank-2 element access. */
+    const float& operator()(int i, int j) const {
+        require_rank(2);
+        return data_[axis_offset(0, i) + axis_offset(1, j)];
+    }
+
+    /** @brief Bounds-checked element access for rank-3 tensors, e.g. @c t(i, j, k). */
+    float& operator()(int i, int j, int k) {
+        require_rank(3);
+        return data_[axis_offset(0, i) + axis_offset(1, j) + axis_offset(2, k)];
+    }
+
+    /** @brief Const rank-3 element access. */
+    const float& operator()(int i, int j, int k) const {
+        require_rank(3);
+        return data_[axis_offset(0, i) + axis_offset(1, j) + axis_offset(2, k)];
+    }
 
     /**
      * @brief Set every element to @p v.
@@ -126,6 +162,31 @@ public:
      *         non-positive.
      */
     void reshape(const std::vector<int>& new_shape);
+
+private:
+    void require_rank(int rank) const {
+        if (ndim_ != rank) {
+            throw std::invalid_argument("idx rank must match tensor ndim");
+        }
+    }
+
+    /** @return @p index times the stride of @p axis, after a bounds check. */
+    int axis_offset(int axis, int index) const {
+        if (index < 0 || index >= shape_[axis]) {
+            throw std::out_of_range("index out of bounds");
+        }
+        return index * strides_[axis];
+    }
+
+    int braced_offset(std::initializer_list<int> idx) const {
+        require_rank(static_cast<int>(idx.size()));
+        int off = 0;
+        int axis = 0;
+        for (int index : idx) {
+            off += axis_offset(axis++, index);
+        }
+        return off;
+    }
 };
 
 /**
@@ -142,72 +203,6 @@ public:
 [[nodiscard]] Tensor matmul(const Tensor& a, const Tensor& b);
 
 /**
- * @brief Elementwise addition of two tensors with identical shape.
- * @throws std::invalid_argument if shapes differ.
- */
-[[nodiscard]] Tensor add(const Tensor& a, const Tensor& b);
-
-/**
- * @brief Elementwise subtraction of two tensors with identical shape.
- * @throws std::invalid_argument if shapes differ.
- */
-[[nodiscard]] Tensor sub(const Tensor& a, const Tensor& b);
-
-/**
- * @brief Elementwise multiplication of two tensors with identical shape.
- * @throws std::invalid_argument if shapes differ.
- */
-[[nodiscard]] Tensor mul(const Tensor& a, const Tensor& b);
-
-/**
- * @brief Elementwise division of two tensors with identical shape.
- * @throws std::invalid_argument if shapes differ.
- */
-[[nodiscard]] Tensor div(const Tensor& a, const Tensor& b);
-
-/**
- * @brief Add scalar @p s to each element of @p a.
- */
-[[nodiscard]] Tensor add(const Tensor& a, float s);
-
-/**
- * @brief Subtract scalar @p s from each element of @p a.
- */
-[[nodiscard]] Tensor sub(const Tensor& a, float s);
-
-/**
- * @brief Multiply each element of @p a by scalar @p s.
- */
-[[nodiscard]] Tensor mul(const Tensor& a, float s);
-
-/**
- * @brief Divide each element of @p a by scalar @p s.
- */
-[[nodiscard]] Tensor div(const Tensor& a, float s);
-
-/**
- * @brief Convenience operator for elementwise tensor addition.
- * @throws std::invalid_argument if shapes differ.
- */
-[[nodiscard]] Tensor operator+(const Tensor& a, const Tensor& b);
-
-/**
- * @brief Convenience operator for elementwise tensor subtraction.
- * @throws std::invalid_argument if shapes differ.
- */
-[[nodiscard]] Tensor operator-(const Tensor& a, const Tensor& b);
-
-/**
- * @brief Convenience operator for tensor-scalar multiplication.
- */
-[[nodiscard]] Tensor operator*(const Tensor& a, float s);
-
-/**
- * @brief Convenience operator for tensor-scalar multiplication.
- */
-[[nodiscard]] Tensor operator*(float s, const Tensor&a);
-
- /**
  * @brief Transpose a rank-2 tensor.
  *
  * If input has shape [m, n], returns shape [n, m].

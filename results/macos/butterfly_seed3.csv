@@ -1,0 +1,6 @@
+variant,seed,epoch,train_loss,test_loss,test_accuracy,epoch_seconds,hidden_params
+butterfly,3,1,0.256477,0.125944,0.9614,11.7633,9728
+butterfly,3,2,0.0956716,0.0935576,0.9709,11.783,9728
+butterfly,3,3,0.062162,0.100025,0.9707,11.8084,9728
+butterfly,3,4,0.0482915,0.0836006,0.9743,11.7801,9728
+butterfly,3,5,0.036433,0.0837967,0.9757,11.795,9728

@@ -2,6 +2,8 @@
 #include <stdexcept>
 #include <vadugrad/dense_linear.hpp>
 
+#include "grad_check.hpp"
+
 TEST(DenseLinearTest, ForwardMatchesHandComputation) {
     DenseLinear layer(2, 3);
     Tensor& W = layer.weight();
@@ -96,6 +98,25 @@ TEST(DenseLinearTest, BatchedBackwardGradWeightAccumulates) {
 TEST(DenseLinearTest, InvalidFeatureCountThrows) {
     EXPECT_THROW(DenseLinear(0, 4), std::invalid_argument);
     EXPECT_THROW(DenseLinear(3, -1), std::invalid_argument);
+}
+
+// Random non-square layer with a batch of 5: a transposed weight or a bias gradient summed
+// over the wrong axis would still have the right shape, but fails this comparison.
+TEST(DenseLinearTest, GradientsMatchFiniteDifferences) {
+    DenseLinear layer(7, 4);
+    layer.weight() = grad_check::random_tensor({7, 4}, 41u);
+    layer.bias() = grad_check::random_tensor({4}, 42u);
+    Tensor x = grad_check::random_tensor({5, 7}, 43u);
+    const Tensor upstream = grad_check::random_tensor({5, 4}, 44u);
+
+    const auto grads = layer.backward(x, upstream);
+    auto loss = [&] { return grad_check::weighted_sum(layer.forward(x), upstream); };
+
+    grad_check::expect_close(grads.grad_input, grad_check::numerical_gradient(x, loss), 1e-2f, "input");
+    grad_check::expect_close(grads.grad_weight, grad_check::numerical_gradient(layer.weight(), loss),
+                             1e-2f, "weight");
+    grad_check::expect_close(grads.grad_bias, grad_check::numerical_gradient(layer.bias(), loss),
+                             1e-2f, "bias");
 }
 
 TEST(DenseLinearTest, ForwardWrongInnerDimThrows) {

@@ -16,7 +16,6 @@
 class DenseLinear {
     Tensor weight_;  ///< Shape [in_features, out_features].
     Tensor bias_;    ///< Shape [out_features].
-    Tensor gradient_;
 
 public:
     /**
@@ -33,7 +32,9 @@ public:
     /** @return Const bias. */
     const Tensor& bias() const;
 
+    /** @return Input width d_in (rows of the weight matrix). */
     int in_features() const;
+    /** @return Output width d_out (columns of the weight matrix). */
     int out_features() const;
 
     /**
@@ -55,9 +56,12 @@ public:
     };
 
     /**
+     * @brief Backward pass: dL/dx = g W^T, dL/dW = x^T g, dL/db = column sums of g,
+     *        where g = dL/dy.
      * @param x Same tensor as used in @ref forward (shape [batch, in_features]).
      * @param grad_output @f$\partial L/\partial y@f$, shape [batch, out_features].
+     * @return Gradients for the input, weight and bias.
+     * @throws std::invalid_argument on a shape mismatch.
      */
     [[nodiscard]] BackwardGradients backward(const Tensor& x, const Tensor& grad_output) const;
-
 };
